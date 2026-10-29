@@ -5,18 +5,20 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Bike, CreditCard, Loader2, Lock, QrCode, ShoppingBag } from "lucide-react";
+import { Bike, Clock, CreditCard, Loader2, Lock, QrCode, ShoppingBag, Smartphone, User, Wallet as WalletIcon } from "lucide-react";
 import { cart, useCart } from "@/lib/cart";
-import { brl, formatPhone } from "@/lib/format";
+import { brl, formatPhone, onlyDigits } from "@/lib/format";
+import { formatOpening } from "@/lib/hours";
+import { rememberOrder, saveCheckout, savedCheckout, type SavedCheckout } from "@/lib/my-orders";
 import { useSession } from "@/lib/session";
-import type { Address, DeliveryQuote, PaymentMethod } from "@/lib/types";
-import { AuthForm } from "@/components/AuthForm";
+import { WALLET_LABEL, type Address, type Contact, type DeliveryQuote, type PaymentMethod, type Wallet } from "@/lib/types";
 import { AddressFields, EMPTY_ADDRESS, isAddressComplete } from "@/components/AddressFields";
+import { WhatsAppIcon } from "@/components/icons";
 import { CardForm, type CardData } from "./CardForm";
 
 const EMPTY_CARD: CardData = { number: "", name: "", expiry: "", cvv: "", installments: 1 };
 
-type QuoteState = { key: string; loading: boolean; quote?: DeliveryQuote; error?: string };
+type QuoteState = { key: string; loading: boolean; quote?: DeliveryQuote; preorder?: { opensAt: string | null }; error?: string };
 
 // Cota o frete (com debounce) sempre que o endereço completo muda.
 function useDeliveryQuote(address: Address, subtotal: number, enabled: boolean) {
@@ -35,7 +37,7 @@ function useDeliveryQuote(address: Address, subtotal: number, enabled: boolean) 
           signal: ctrl.signal,
         });
         const data = await res.json();
-        setState(res.ok ? { key, loading: false, quote: data.quote } : { key, loading: false, error: data.error ?? Object.values(data.errors ?? {})[0] });
+        setState(res.ok ? { key, loading: false, quote: data.quote, preorder: data.preorder } : { key, loading: false, error: data.error ?? Object.values(data.errors ?? {})[0] });
       } catch {
         if (!ctrl.signal.aborted) setState({ key, loading: false, error: "Não foi possível calcular a entrega. Tente novamente." });
       }
@@ -50,19 +52,40 @@ function useDeliveryQuote(address: Address, subtotal: number, enabled: boolean) 
   return state?.key === key ? state : { key, loading: true };
 }
 
+const EMPTY_CONTACT: Contact = { name: "", phone: "" };
+const isContactComplete = (c: Contact) => c.name.trim().length >= 2 && [10, 11].includes(onlyDigits(c.phone).length);
+
+// Apple Pay no Safari de iPhone/iPad/Mac; Google Pay no resto.
+const detectWallet = (): Wallet => {
+  const ua = navigator.userAgent;
+  return /iPhone|iPad|iPod|Macintosh/.test(ua) && /Safari/.test(ua) && !/Chrome|CriOS|FxiOS|Android/.test(ua) ? "apple_pay" : "google_pay";
+};
+
 export default function CheckoutPage() {
   const router = useRouter();
   const { items, total, count } = useCart();
-  const { customer, loaded } = useSession();
-  const [editing, setEditing] = useState(false);
+  const { customer } = useSession();
   const [method, setMethod] = useState<PaymentMethod>("pix");
   const [card, setCard] = useState<CardData>(EMPTY_CARD);
+  const [wallet, setWallet] = useState<Wallet>("google_pay");
+  const [saved, setSaved] = useState<SavedCheckout | null>(null);
+  const [contactDraft, setContact] = useState<Contact | null>(null);
   const [addressDraft, setAddress] = useState<Address | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const identified = !!customer && !editing;
-  const address = addressDraft ?? customer?.address ?? EMPTY_ADDRESS;
+  // Dados do aparelho só existem no navegador: carrega depois de montar.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setSaved(savedCheckout());
+      setWallet(detectWallet());
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
+
+  const contact = contactDraft ?? saved?.contact ?? (customer ? { name: customer.name, phone: customer.phone } : EMPTY_CONTACT);
+  const address = addressDraft ?? saved?.address ?? customer?.address ?? EMPTY_ADDRESS;
+  const identified = isContactComplete(contact);
   const delivery = useDeliveryQuote(address, total, identified);
   const quote = delivery?.quote;
   const grandTotal = total + (quote?.fee ?? 0);
@@ -77,7 +100,6 @@ export default function CheckoutPage() {
     );
   }
 
-
   async function placeOrder() {
     setSubmitting(true);
     setError(null);
@@ -86,9 +108,11 @@ export default function CheckoutPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         items: items.map(({ slug, flavor, qty }) => ({ slug, flavor, qty })),
+        contact,
         address,
         method,
         card: method === "card" ? card : undefined,
+        wallet: method === "wallet" ? wallet : undefined,
       }),
     });
     const data = await res.json();
@@ -96,6 +120,8 @@ export default function CheckoutPage() {
       setSubmitting(false);
       return setError(data.error ?? "Não foi possível finalizar o pedido");
     }
+    rememberOrder(data.order.id);
+    saveCheckout({ contact, address });
     router.push(`/pedido/${data.order.id}`);
     cart.clear();
   }
@@ -105,26 +131,40 @@ export default function CheckoutPage() {
       <h1 className="font-display text-3xl">Checkout</h1>
       <div className="mt-6 grid gap-5 lg:grid-cols-[1fr_380px] lg:items-start">
         <div className="flex flex-col gap-5">
-          {/* 1. Identificação */}
+          {/* 1. Contato */}
           <Step n={1} title="Seus dados" done={identified}>
-            {!loaded ? (
-              <div className="h-20 animate-pulse rounded-2xl bg-surface-2" />
-            ) : identified ? (
-              <div className="flex items-center justify-between gap-3 rounded-2xl bg-surface-2 p-4">
-                <div className="min-w-0 text-sm">
-                  <p className="font-semibold">{customer.name}</p>
-                  <p className="truncate text-muted">{customer.email}</p>
-                  <p className="text-muted">{formatPhone(customer.phone)} • @{customer.instagram}</p>
-                </div>
-                <button onClick={() => setEditing(true)} className="shrink-0 text-sm font-semibold text-brand">Trocar conta</button>
-              </div>
-            ) : (
-              <AuthForm initialMode={customer ? "login" : "register"} onSuccess={() => setEditing(false)} />
-            )}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label>
+                <span className="mb-1.5 block text-sm font-medium text-muted">WhatsApp</span>
+                <span className="relative block">
+                  <WhatsAppIcon className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-[#25D366]" />
+                  <input
+                    className="input pl-12!"
+                    inputMode="tel"
+                    autoComplete="tel-national"
+                    placeholder="(12) 99999-9999"
+                    value={formatPhone(contact.phone)}
+                    onChange={(e) => setContact({ ...contact, phone: onlyDigits(e.target.value).slice(0, 11) })}
+                  />
+                </span>
+              </label>
+              <label>
+                <span className="mb-1.5 block text-sm font-medium text-muted">Nome</span>
+                <span className="relative block">
+                  <User className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-muted" />
+                  <input className="input pl-12!" autoComplete="name" placeholder="Como te chamamos?" value={contact.name} onChange={(e) => setContact({ ...contact, name: e.target.value })} />
+                </span>
+              </label>
+            </div>
+            <p className="mt-3 text-xs text-muted">
+              Sem cadastro: você acompanha o pedido pelo WhatsApp em <Link href="/pedidos" className="text-white underline-offset-4 hover:underline">Meus pedidos</Link>.
+              {!customer && <> Tem conta? <Link href="/entrar?next=/checkout" className="text-brand">Entrar</Link></>}
+            </p>
           </Step>
 
           {/* 2. Endereço */}
           <Step n={2} title="Endereço de entrega" done={!!quote} disabled={!identified}>
+            <p className="-mt-2 mb-3 text-sm text-muted">Digite o CEP: a gente acha a rua, você só completa número e apto.</p>
             <AddressFields value={address} onChange={setAddress} />
             <AnimatePresence mode="wait" initial={false}>
               {delivery && (
@@ -156,8 +196,22 @@ export default function CheckoutPage() {
                         <p className="text-muted">
                           {quote.distanceKm.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} km • ~{quote.durationMin} min de trajeto
                         </p>
+                        {!quote.free && (quote.surge ?? 1) > 1 && (
+                          <p className="text-xs text-brand">{delivery.preorder ? "Frete com tarifa dinâmica" : "Horário de pico: frete com tarifa dinâmica"}</p>
+                        )}
                       </div>
                       <span className={`font-display text-lg ${quote.free ? "text-leaf" : "text-brand"}`}>{quote.free ? "Grátis" : brl(quote.fee)}</span>
+                    </div>
+                  )}
+                  {quote && delivery.preorder && (
+                    <div className="mt-3 flex gap-3 rounded-2xl border border-line bg-surface-2 p-4 text-sm">
+                      <Clock className="size-5 shrink-0 text-brand" />
+                      <div>
+                        <p className="font-semibold">Loja fechada: seu pedido será uma encomenda</p>
+                        <p className="mt-0.5 text-muted">
+                          Enviamos assim que a loja abrir{delivery.preorder.opensAt && ` (${formatOpening(delivery.preorder.opensAt)})`} — se der, sai antes.
+                        </p>
+                      </div>
                     </div>
                   )}
                 </motion.div>
@@ -167,10 +221,11 @@ export default function CheckoutPage() {
 
           {/* 3. Pagamento */}
           <Step n={3} title="Pagamento" disabled={!quote}>
-            <div className="grid grid-cols-2 gap-2 rounded-2xl bg-surface-2 p-1.5">
+            <div className="grid grid-cols-3 gap-1.5 rounded-2xl bg-surface-2 p-1.5">
               {([
                 { id: "pix", label: "PIX", icon: QrCode },
-                { id: "card", label: "Cartão de crédito", icon: CreditCard },
+                { id: "wallet", label: WALLET_LABEL[wallet], icon: wallet === "apple_pay" ? Smartphone : WalletIcon },
+                { id: "card", label: "Cartão", icon: CreditCard },
               ] as const).map(({ id, label, icon: Icon }) => (
                 <button
                   key={id}
@@ -201,6 +256,14 @@ export default function CheckoutPage() {
                       <p className="mt-1 text-muted">
                         Ao finalizar, geramos um QR Code e o código copia e cola. O pagamento é confirmado na hora e o PIX expira em 15 minutos.
                       </p>
+                    </div>
+                  </div>
+                ) : method === "wallet" ? (
+                  <div className="flex gap-4 rounded-2xl border border-line bg-surface-2 p-4 text-sm">
+                    {wallet === "apple_pay" ? <Smartphone className="size-10 shrink-0" /> : <WalletIcon className="size-10 shrink-0" />}
+                    <div>
+                      <p className="font-semibold">Pague com {WALLET_LABEL[wallet]}</p>
+                      <p className="mt-1 text-muted">Confirme com {wallet === "apple_pay" ? "Face ID ou Touch ID" : "a digital ou o bloqueio de tela"}, sem digitar o cartão.</p>
                     </div>
                   </div>
                 ) : (
@@ -251,9 +314,13 @@ export default function CheckoutPage() {
             )}
           </AnimatePresence>
 
-          <button onClick={placeOrder} disabled={!identified || !quote || submitting} className="btn-brand mt-5 w-full text-lg">
-            {submitting ? <Loader2 className="size-5 animate-spin" /> : <Lock className="size-4" />}
-            {method === "pix" ? "Gerar PIX" : "Pagar"} {brl(grandTotal)}
+          <button
+            onClick={placeOrder}
+            disabled={!identified || !quote || submitting}
+            className={method === "wallet" ? "mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-white py-3.5 text-lg font-semibold text-black transition active:scale-[.98] disabled:opacity-40" : "btn-brand mt-5 w-full text-lg"}
+          >
+            {submitting ? <Loader2 className="size-5 animate-spin" /> : method === "wallet" ? null : <Lock className="size-4" />}
+            {method === "wallet" ? `${WALLET_LABEL[wallet]} · ${brl(grandTotal)}` : `${delivery?.preorder ? "Encomendar" : method === "pix" ? "Gerar PIX" : "Pagar"} ${brl(grandTotal)}`}
           </button>
           <p className="mt-3 text-center text-xs text-muted">Ambiente de demonstração — nenhum valor real é cobrado.</p>
         </aside>

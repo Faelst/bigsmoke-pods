@@ -4,12 +4,17 @@ import Image from "next/image";
 import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { ExternalLink, ImagePlus, Loader2, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { ExternalLink, Flame, ImagePlus, Loader2, Pencil, Plus, Search, Sparkles, Trash2 } from "lucide-react";
 import { adminFetch, useAdminData } from "@/lib/admin-client";
 import { brl } from "@/lib/format";
 import { filterProducts } from "@/lib/products";
 import type { Product } from "@/lib/types";
 import { Field, PageTitle, Sheet, Toggle } from "@/components/admin/ui";
+
+const TAGS = [
+  { key: "bestseller", label: "Mais vendido", hint: "Selo e filtro “Mais vendidos” na loja", icon: Flame, on: "bg-brand text-black" },
+  { key: "isNew", label: "Novidade", hint: "Selo e filtro “Novidades” na loja", icon: Sparkles, on: "bg-leaf text-black" },
+] as const;
 
 export default function ProductsAdminPage() {
   const { data, setData } = useAdminData<{ products: Product[] }>("/api/admin/products");
@@ -20,10 +25,11 @@ export default function ProductsAdminPage() {
   const upsert = (p: Product) =>
     setData((d) => d && { products: d.products.some((x) => x.id === p.id) ? d.products.map((x) => (x.id === p.id ? p : x)) : [p, ...d.products] });
 
-  async function toggleActive(p: Product) {
-    upsert({ ...p, active: !p.active });
+  // Atualização otimista de um campo booleano (visível, mais vendido, novidade).
+  async function toggle(p: Product, key: "active" | "bestseller" | "isNew") {
+    upsert({ ...p, [key]: !p[key] });
     try {
-      upsert((await adminFetch<{ product: Product }>(`/api/admin/products/${p.id}`, { method: "PATCH", body: JSON.stringify({ active: !p.active }) })).product);
+      upsert((await adminFetch<{ product: Product }>(`/api/admin/products/${p.id}`, { method: "PATCH", body: JSON.stringify({ [key]: !p[key] }) })).product);
     } catch {
       upsert(p);
     }
@@ -58,8 +64,20 @@ export default function ProductsAdminPage() {
                   <span className="font-semibold text-brand">{brl(p.price)}</span> • {p.flavors.length} sabores
                   {!p.active && <span className="ml-1 rounded bg-line px-1.5 py-0.5 text-[10px] uppercase">Oculto</span>}
                 </p>
+                <div className="mt-1.5 flex gap-1.5">
+                  {TAGS.map(({ key, label, icon: Icon, on }) => (
+                    <button
+                      key={key}
+                      onClick={() => toggle(p, key)}
+                      aria-pressed={!!p[key]}
+                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold transition ${p[key] ? on : "bg-surface-2 text-muted hover:text-white"}`}
+                    >
+                      <Icon className="size-3" /> {label}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <Toggle checked={p.active} onChange={() => toggleActive(p)} label={p.active ? "Ocultar da loja" : "Mostrar na loja"} />
+              <Toggle checked={p.active} onChange={() => toggle(p, "active")} label={p.active ? "Ocultar da loja" : "Mostrar na loja"} />
               <button onClick={() => setEditing(p)} aria-label={`Editar ${p.name}`} className="grid size-10 shrink-0 place-items-center rounded-xl bg-surface-2 hover:text-brand">
                 <Pencil className="size-4" />
               </button>
@@ -100,6 +118,8 @@ function ProductForm({ product, onSaved, onDeleted }: { product: Product | null;
     image: product?.image ?? "",
     flavors: product?.flavors.join(", ") ?? "",
     badge: product?.badge ?? "",
+    bestseller: product?.bestseller ?? false,
+    isNew: product?.isNew ?? false,
     active: product?.active ?? true,
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -188,7 +208,16 @@ function ProductForm({ product, onSaved, onDeleted }: { product: Product | null;
       <Field label="Descrição" error={errors.description}>
         <textarea className="input min-h-24" value={v.description} onChange={(e) => set("description", e.target.value)} />
       </Field>
-      <Field label="Selo (opcional)" error={errors.badge} hint='Ex.: "Novo", "Mais vendido", "Promo"'>
+      {TAGS.map(({ key, label, hint, icon: Icon }) => (
+        <div key={key} className="flex items-center justify-between rounded-2xl bg-surface-2 p-4">
+          <div>
+            <p className="flex items-center gap-2 font-semibold"><Icon className="size-4 text-brand" /> {label}</p>
+            <p className="text-xs text-muted">{hint}</p>
+          </div>
+          <Toggle checked={v[key]} onChange={(x) => set(key, x)} label={label} />
+        </div>
+      ))}
+      <Field label="Selo extra (opcional)" error={errors.badge} hint='Texto livre, ex.: "Promo", "Últimas unidades"'>
         <input className="input" value={v.badge} onChange={(e) => set("badge", e.target.value)} />
       </Field>
       <div className="flex items-center justify-between rounded-2xl bg-surface-2 p-4">

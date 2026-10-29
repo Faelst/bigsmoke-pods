@@ -3,21 +3,18 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "motion/react";
-import { Home, Search, ShoppingBag, User } from "lucide-react";
+import { Home, Package, Search, ShoppingBag } from "lucide-react";
 import { cart, useCart } from "@/lib/cart";
-import { useSession } from "@/lib/session";
 
 export function BottomNav() {
   const pathname = usePathname();
   const { count } = useCart();
-  const { customer } = useSession();
-  const accountHref = customer ? "/conta" : "/entrar";
 
   const items = [
     { href: "/", label: "Início", icon: Home, active: pathname === "/" },
     { href: "/#busca", label: "Buscar", icon: Search, active: false },
     { label: "Carrinho", icon: ShoppingBag, onClick: cart.open, badge: count },
-    { href: accountHref, label: "Conta", icon: User, active: ["/conta", "/entrar"].includes(pathname) },
+    { href: "/pedidos", label: "Pedidos", icon: Package, active: ["/pedidos", "/conta", "/entrar"].includes(pathname) || pathname.startsWith("/pedido/") },
   ];
 
   return (

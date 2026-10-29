@@ -46,6 +46,7 @@ export function parseProduct(body: unknown, partial = false) {
     out.flavors = [...new Set(list.map((f) => String(f).trim()).filter(Boolean))].slice(0, 30);
     if (out.flavors.length === 0) errors.flavors = "Informe ao menos um sabor";
   }
+  for (const k of ["bestseller", "isNew"] as const) if (!partial || has(k)) out[k] = b[k] === true;
   if (!partial || has("active")) out.active = b.active === undefined ? true : Boolean(b.active);
   if (out.image && !/^\/(products|api\/uploads)\//.test(out.image)) errors.image = "Imagem inválida";
   if (Object.keys(errors).length) throw new ProductError(errors);

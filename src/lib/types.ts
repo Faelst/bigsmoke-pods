@@ -6,7 +6,8 @@ export type OrderStatus =
   | "entregue"
   | "cancelado";
 
-export type PaymentMethod = "pix" | "card";
+export type PaymentMethod = "pix" | "card" | "wallet";
+export type Wallet = "apple_pay" | "google_pay";
 
 export type Customer = {
   id: string;
@@ -41,12 +42,35 @@ export type DeliveryPricing = {
   maxKm: number; // raio máximo de entrega
 };
 
+// Tarifa dinâmica: entre start e end (HH:MM, horário de Brasília) a corrida
+// é multiplicada. Se end < start, a faixa atravessa a meia-noite.
+export type DeliverySurge = { start: string; end: string; multiplier: number };
+
+// Tarifa dinâmica nas encomendas (loja fechada): a do horário de abertura,
+// a do horário do pedido, sempre um multiplicador fixo ou nenhuma.
+export type PreorderSurge = "opening" | "now" | "always" | "none";
+
 export type DeliverySettings = {
   store: (Address & GeoPoint) | null;
   pricing: DeliveryPricing;
+  surges?: DeliverySurge[];
+  preorderSurge?: PreorderSurge;
+  preorderMultiplier?: number; // usado em "always"
 };
 
-export type DeliveryQuote = { fee: number; distanceKm: number; durationMin: number; free: boolean };
+// Horário de funcionamento por dia da semana (índice 0 = domingo), horário de
+// Brasília. start === end = aberto 24h; end < start = fecha depois da meia-noite.
+export type DayHours = { open: boolean; start: string; end: string };
+
+export type SocialLinks = { whatsapp: string; instagram: string; tiktok: string };
+
+// closedUntil: loja fechada manualmente até esse instante (reabre sozinha).
+export type StoreSettings = { hours: DayHours[]; social: SocialLinks; closedUntil?: string | null };
+
+// Situação da loja agora; opensAt = próxima abertura (null se nunca abre).
+export type StoreStatus = { open: boolean; opensAt: string | null; manual?: boolean };
+
+export type DeliveryQuote = { fee: number; distanceKm: number; durationMin: number; free: boolean; surge?: number };
 
 // Como fica gravado no banco (nunca enviar ao cliente).
 export type StoredCustomer = Customer & { passwordHash: string };
@@ -64,7 +88,9 @@ export type Product = {
   description: string;
   image: string;
   flavors: string[];
-  badge?: string;
+  badge?: string; // selo livre (ex.: "Promo")
+  bestseller?: boolean; // selo e filtro "Mais vendidos"
+  isNew?: boolean; // selo e filtro "Novidades"
   active: boolean;
   createdAt: string;
 };
@@ -80,17 +106,23 @@ export type OrderItem = {
 
 export type Payment =
   | { method: "pix"; pixCode: string; expiresAt: string; paidAt?: string }
-  | { method: "card"; brand: string; last4: string; installments: number; paidAt?: string };
+  | { method: "card"; brand: string; last4: string; installments: number; paidAt?: string }
+  | { method: "wallet"; wallet: Wallet; paidAt?: string };
+
+// Quem recebe o pedido (compra sem conta: só nome e WhatsApp).
+export type Contact = { name: string; phone: string };
 
 export type Order = {
   id: string;
   code: string;
-  customerId: string;
+  customerId?: string; // só quando comprou logado
+  contact?: Contact; // pedidos antigos (antes da compra sem conta) não têm
   items: OrderItem[];
   subtotal?: number; // pedidos antigos não têm entrega
   address?: Address & GeoPoint;
   delivery?: DeliveryQuote;
   trackingUrl?: string; // link de acompanhamento da corrida (Uber)
+  preorder?: { opensAt: string | null }; // feito com a loja fechada: envio na abertura
   total: number;
   payment: Payment;
   status: OrderStatus;
@@ -114,3 +146,12 @@ export const STATUS_FLOW: OrderStatus[] = [
   "saiu_para_entrega",
   "entregue",
 ];
+
+// O que a busca por telefone mostra: sem nome nem endereço. O id (link com os
+// detalhes) só vem para os pedidos que o próprio aparelho já conhece.
+export type OrderSummary = Pick<Order, "code" | "status" | "total" | "createdAt" | "preorder"> & {
+  id?: string;
+  items: Pick<OrderItem, "name" | "flavor" | "qty" | "image">[];
+};
+
+export const WALLET_LABEL: Record<Wallet, string> = { apple_pay: "Apple Pay", google_pay: "Google Pay" };

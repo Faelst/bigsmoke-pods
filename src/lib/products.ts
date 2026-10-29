@@ -16,7 +16,7 @@ export const SEED_PRODUCTS: Seed[] = [
     description: "40.000 puffs, capacidade de 20 mL. Tela digital com nível de bateria e líquido.",
     image: "/products/elfbar-bc-pro-40k.jpg",
     flavors: ["Grape Ice", "Watermelon Ice", "Strawberry Kiwi", "Blue Razz Ice", "Menthol"],
-    badge: "Mais vendido",
+    bestseller: true,
   },
   {
     slug: "elfbar-23k",
@@ -50,7 +50,7 @@ export const SEED_PRODUCTS: Seed[] = [
     description: "40.000 puffs, dois sabores com intensidade controlável, capacidade de 18 mL.",
     image: "/products/ignite-v400.jpg",
     flavors: ["Grape + Menthol", "Watermelon + Strawberry", "Passion Fruit + Mango"],
-    badge: "Novo",
+    isNew: true,
   },
   {
     slug: "ignite-v300-ultra-slim",

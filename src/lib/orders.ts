@@ -4,8 +4,8 @@ import { query, transaction, type Schema } from "./db";
 import { cardBrand, luhn } from "./validation";
 import { onlyDigits } from "./format";
 import { deliveryFee, parseAddress } from "./delivery-pricing";
-import { DeliveryError, quoteDelivery } from "./delivery";
-import { STATUS_FLOW, STATUS_LABEL, type Order, type OrderItem, type OrderStatus } from "./types";
+import { DeliveryError, deliveryTiming, quoteDelivery } from "./delivery";
+import { STATUS_FLOW, STATUS_LABEL, type Contact, type Order, type OrderItem, type OrderStatus, type OrderSummary } from "./types";
 
 export class OrderError extends Error {
   constructor(message: string, public status = 400) {
@@ -41,19 +41,55 @@ export function listOrders(customerId: string) {
   return withExpirations((db) => mine(db).sort(byNewest), mine);
 }
 
-export function getOrder(customerId: string, id: string) {
-  const find = (db: Schema) => db.orders.filter((o) => o.id === id && o.customerId === customerId);
+// O id (UUID) funciona como o link secreto do pedido: quem tem, acompanha.
+export function getOrder(id: string) {
+  const find = (db: Schema) => db.orders.filter((o) => o.id === id);
   return withExpirations((db) => find(db)[0] ?? null, find);
+}
+
+const orderPhone = (db: Schema, o: Order) => o.contact?.phone ?? db.customers.find((c) => c.id === o.customerId)?.phone;
+
+// Pedidos de um WhatsApp, resumidos; `knownIds` são os pedidos feitos neste aparelho.
+export function trackOrders(phone: string, knownIds: string[]) {
+  const mine = (db: Schema) => db.orders.filter((o) => orderPhone(db, o) === phone);
+  return withExpirations(
+    (db) =>
+      mine(db)
+        .sort(byNewest)
+        .map(
+          (o): OrderSummary => ({
+            ...(knownIds.includes(o.id) && { id: o.id }),
+            code: o.code,
+            status: o.status,
+            total: o.total,
+            createdAt: o.createdAt,
+            preorder: o.preorder,
+            items: o.items.map(({ name, flavor, qty, image }) => ({ name, flavor, qty, image })),
+          }),
+        ),
+    mine,
+  );
 }
 
 type CardInput = { number: string; name: string; expiry: string; cvv: string; installments: number };
 type CartLine = { slug: string; flavor: string; qty: number };
 type CreateInput = {
   items: CartLine[];
+  contact: unknown;
   address: unknown;
-  method: "pix" | "card";
+  method: "pix" | "card" | "wallet";
   card?: CardInput;
+  wallet?: unknown;
 };
+
+function parseContact(raw: unknown): Contact {
+  const b = (raw ?? {}) as Record<string, unknown>;
+  const name = String(b.name ?? "").trim().replace(/\s+/g, " ").slice(0, 80);
+  const phone = onlyDigits(String(b.phone ?? ""));
+  if (name.length < 2) throw new OrderError("Informe seu nome");
+  if (phone.length !== 10 && phone.length !== 11) throw new OrderError("Informe um WhatsApp válido com DDD");
+  return { name, phone };
+}
 
 // Preços sempre recalculados no servidor a partir do catálogo.
 function priceItems(db: Schema, lines: CartLine[]): OrderItem[] {
@@ -88,10 +124,14 @@ function mockPixCode(code: string, total: number) {
   return `00020126580014BR.GOV.BCB.PIX0136bigsmokepods-mock-${code.toLowerCase()}52040000530398654${String(amount.length).padStart(2, "0")}${amount}5802BR5914BIG SMOKE PODS6009SAO PAULO62070503***6304MOCK`;
 }
 
-export async function createOrder(customerId: string, input: CreateInput) {
+// customerId só existe quando o cliente está logado (a conta é opcional).
+export async function createOrder(customerId: string | null, input: CreateInput) {
   if (!Array.isArray(input?.items) || input.items.length === 0) throw new OrderError("Carrinho vazio");
+  const contact = parseContact(input.contact);
   const card = input.method === "card" ? validateCard(input.card) : null;
-  if (!card && input.method !== "pix") throw new OrderError("Forma de pagamento inválida");
+  // MOCK: Apple Pay / Google Pay aprovados na hora (no real viria do gateway).
+  const wallet = input.method === "wallet" ? (input.wallet === "apple_pay" ? "apple_pay" : "google_pay") : null;
+  if (!card && !wallet && input.method !== "pix") throw new OrderError("Forma de pagamento inválida");
 
   if (!input.address) throw new OrderError("Informe o endereço de entrega");
   const address = parseAddress(input.address);
@@ -106,25 +146,24 @@ export async function createOrder(customerId: string, input: CreateInput) {
   return transaction((db) => {
     const items = priceItems(db, input.items);
     const subtotal = sumItems(items);
-    const delivery = deliveryFee(db.delivery.pricing, quote.distanceKm, quote.durationMin, subtotal);
+    const { surge, preorder } = deliveryTiming(db.delivery, db.settings);
+    const delivery = deliveryFee(db.delivery.pricing, quote.distanceKm, quote.durationMin, subtotal, surge);
     const total = Math.round((subtotal + delivery.fee) * 100) / 100;
     const now = new Date();
     const at = now.toISOString();
     const code = `BSP${now.getTime().toString(36).toUpperCase().slice(-6)}`;
-    const base = { id: randomUUID(), code, customerId, items, subtotal, address: { ...address.data, ...point }, delivery, total, createdAt: at };
+    const base = { id: randomUUID(), code, ...(customerId && { customerId }), contact, items, subtotal, address: { ...address.data, ...point }, delivery, ...(preorder && { preorder }), total, createdAt: at };
 
     // Guarda o endereço para preencher o próximo checkout.
     const customer = db.customers.find((c) => c.id === customerId);
     if (customer) customer.address = address.data;
 
+    const paid = { status: "pago" as const, history: [{ status: "aguardando_pagamento" as const, at }, { status: "pago" as const, at }] };
     const order: Order = card
-      ? {
-          ...base,
-          payment: { method: "card", ...card, paidAt: at },
-          status: "pago",
-          history: [{ status: "aguardando_pagamento", at }, { status: "pago", at }],
-        }
-      : {
+      ? { ...base, payment: { method: "card", ...card, paidAt: at }, ...paid }
+      : wallet
+        ? { ...base, payment: { method: "wallet", wallet, paidAt: at }, ...paid }
+        : {
           ...base,
           payment: { method: "pix", pixCode: mockPixCode(code, total), expiresAt: new Date(now.getTime() + 15 * 60_000).toISOString() },
           status: "aguardando_pagamento",
@@ -144,9 +183,9 @@ function setStatus(order: Order, status: OrderStatus) {
 }
 
 // MOCK: simula a confirmação do PIX (no real viria de um webhook do PSP).
-export async function confirmPix(customerId: string, id: string) {
+export async function confirmPix(id: string) {
   return transaction((db) => {
-    const order = db.orders.find((o) => o.id === id && o.customerId === customerId);
+    const order = db.orders.find((o) => o.id === id);
     if (!order) throw new OrderError("Pedido não encontrado", 404);
     expire(order);
     if (order.payment.method !== "pix" || order.status !== "aguardando_pagamento")
@@ -160,9 +199,14 @@ export async function confirmPix(customerId: string, id: string) {
 
 export type AdminOrder = Order & { customer: { name: string; email: string; phone: string; instagram: string } | null };
 
+// Dados de quem recebe: o contato do pedido, completado pela conta (se houver).
 function withCustomer(db: Schema, o: Order): AdminOrder {
   const c = db.customers.find((x) => x.id === o.customerId);
-  return { ...o, customer: c ? { name: c.name, email: c.email, phone: c.phone, instagram: c.instagram } : null };
+  if (!c && !o.contact) return { ...o, customer: null };
+  return {
+    ...o,
+    customer: { name: o.contact?.name ?? c!.name, phone: o.contact?.phone ?? c!.phone, email: c?.email ?? "", instagram: c?.instagram ?? "" },
+  };
 }
 
 export function adminListOrders() {
@@ -239,7 +283,7 @@ export function adminStats() {
       revenueToday: paid.filter(isToday).reduce((s, o) => s + o.total, 0),
       awaitingPayment: db.orders.filter((o) => o.status === "aguardando_pagamento").length,
       toShip: db.orders.filter((o) => ["pago", "em_separacao"].includes(o.status)).length,
-      customers: db.customers.length,
+      customers: new Set([...db.customers.map((c) => c.phone), ...db.orders.flatMap((o) => (o.contact ? [o.contact.phone] : []))]).size,
       activeProducts: db.products.filter((p) => p.active).length,
       daily,
       topProducts: [...top.values()].sort((a, b) => b.qty - a.qty).slice(0, 5),
@@ -248,19 +292,31 @@ export function adminStats() {
   }, (db) => db.orders);
 }
 
+// Clientes com conta + quem comprou sem conta (agrupado pelo WhatsApp).
 export function adminListCustomers() {
-  return query((db) =>
-    db.customers
-      .map((c) => {
-        const orders = db.orders.filter((o) => o.customerId === c.id);
-        const paid = orders.filter((o) => !["aguardando_pagamento", "cancelado"].includes(o.status));
-        return {
-          id: c.id, name: c.name, email: c.email, phone: c.phone, instagram: c.instagram, createdAt: c.createdAt,
-          orders: orders.length,
-          spent: paid.reduce((s, o) => s + o.total, 0),
-          lastOrderAt: orders.map((o) => o.createdAt).sort().at(-1) ?? null,
-        };
-      })
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-  );
+  return query((db) => {
+    const summary = (orders: Order[]) => {
+      const paid = orders.filter((o) => !["aguardando_pagamento", "cancelado"].includes(o.status));
+      return {
+        orders: orders.length,
+        spent: paid.reduce((s, o) => s + o.total, 0),
+        lastOrderAt: orders.map((o) => o.createdAt).sort().at(-1) ?? null,
+      };
+    };
+    const accounts = db.customers.map((c) => ({
+      id: c.id, name: c.name, email: c.email, phone: c.phone, instagram: c.instagram, createdAt: c.createdAt, guest: false,
+      ...summary(db.orders.filter((o) => o.customerId === c.id)),
+    }));
+    const guests = new Map<string, Order[]>();
+    for (const o of db.orders)
+      if (!o.customerId && o.contact) guests.set(o.contact.phone, [...(guests.get(o.contact.phone) ?? []), o]);
+    const guestRows = [...guests].map(([phone, orders]) => {
+      const sorted = [...orders].sort(byNewest);
+      return {
+        id: `guest-${phone}`, name: sorted[0].contact!.name, email: "", phone, instagram: "", createdAt: sorted.at(-1)!.createdAt, guest: true,
+        ...summary(orders),
+      };
+    });
+    return [...accounts, ...guestRows].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  });
 }

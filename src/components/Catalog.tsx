@@ -7,14 +7,26 @@ import { brandsOf, filterProducts, type Product } from "@/lib/products";
 import { ProductCard } from "./ProductCard";
 import { QuickAddSheet } from "./QuickAddSheet";
 
+type Chip = { id: string; label: string; match: (p: Product) => boolean };
+
 export function Catalog({ products: all }: { products: Product[] }) {
   const [query, setQuery] = useState("");
-  const [brand, setBrand] = useState<string>();
+  const [chip, setChip] = useState("todos");
   const [quickAdd, setQuickAdd] = useState<Product | null>(null);
   const deferred = useDeferredValue(query);
-  const products = useMemo(() => filterProducts(all, deferred, brand), [all, deferred, brand]);
 
-  const chips = [{ label: "Todos", value: undefined }, ...brandsOf(all).map((b) => ({ label: b, value: b }))];
+  // Filtros: todos, marcações do admin (mais vendidos/novidades) e marcas.
+  const chips = useMemo(() => {
+    const list: Chip[] = [
+      { id: "todos", label: "Todos", match: () => true },
+      { id: "bestseller", label: "🔥 Mais vendidos", match: (p) => !!p.bestseller },
+      { id: "new", label: "✨ Novidades", match: (p) => !!p.isNew },
+      ...brandsOf(all).map((b): Chip => ({ id: `brand:${b}`, label: b, match: (p) => p.brand === b })),
+    ];
+    return list.filter((c) => all.some(c.match));
+  }, [all]);
+  const current = chips.find((c) => c.id === chip) ?? chips[0];
+  const products = useMemo(() => filterProducts(all.filter(current.match), deferred), [all, current, deferred]);
 
   return (
     <section id="busca" className="mx-auto max-w-6xl scroll-mt-20 px-4">
@@ -42,12 +54,12 @@ export function Catalog({ products: all }: { products: Product[] }) {
         </label>
         <div className="no-scrollbar mt-3 flex gap-2 overflow-x-auto">
           {chips.map((c) => {
-            const active = brand === c.value;
-            const count = c.value ? all.filter((p) => p.brand === c.value).length : all.length;
+            const active = current.id === c.id;
+            const count = all.filter(c.match).length;
             return (
               <button
-                key={c.label}
-                onClick={() => setBrand(c.value)}
+                key={c.id}
+                onClick={() => setChip(c.id)}
                 className={`relative shrink-0 rounded-full px-4 py-2 text-sm font-medium transition ${active ? "text-black" : "bg-surface-2 text-muted hover:text-white"}`}
               >
                 {active && <motion.span layoutId="chip" className="absolute inset-0 rounded-full bg-brand" />}

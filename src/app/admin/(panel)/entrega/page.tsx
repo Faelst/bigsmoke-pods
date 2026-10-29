@@ -2,15 +2,17 @@
 
 import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Bike, Car, Check, Crosshair, Loader2, MapPin, Route, Save } from "lucide-react";
+import { Bike, Car, Check, Clock, Crosshair, Loader2, MapPin, Plus, Route, Save, Trash2 } from "lucide-react";
 import { adminFetch, useAdminData } from "@/lib/admin-client";
-import { deliveryFee, UBER_PRESETS } from "@/lib/delivery-pricing";
+import { deliveryFee, surgeAt, UBER_PRESETS } from "@/lib/delivery-pricing";
+import { nowInStore } from "@/lib/hours";
 import { brl } from "@/lib/format";
-import type { Address, DeliveryPricing, DeliverySettings, GeoPoint } from "@/lib/types";
+import type { Address, DeliveryPricing, DeliverySettings, DeliverySurge, GeoPoint, PreorderSurge } from "@/lib/types";
 import { AddressFields, EMPTY_ADDRESS, isAddressComplete } from "@/components/AddressFields";
 import { Field, PageTitle } from "@/components/admin/ui";
 
 type PricingForm = Record<keyof DeliveryPricing, string>;
+type SurgeForm = { start: string; end: string; multiplier: string };
 
 const PRICING_FIELDS: { key: keyof DeliveryPricing; label: string; hint?: string; unit: "R$" | "km" }[] = [
   { key: "base", label: "Tarifa base", unit: "R$" },
@@ -26,6 +28,17 @@ const toForm = (p: DeliveryPricing) =>
   Object.fromEntries(Object.entries(p).map(([k, v]) => [k, String(v).replace(".", ",")])) as PricingForm;
 const fromForm = (f: PricingForm) =>
   Object.fromEntries(Object.entries(f).map(([k, v]) => [k, Number(v.replace(",", ".")) || 0])) as DeliveryPricing;
+
+const toSurgeForm = (s: DeliverySurge): SurgeForm => ({ ...s, multiplier: String(s.multiplier).replace(".", ",") });
+const fromSurgeForm = (s: SurgeForm): DeliverySurge => ({ ...s, multiplier: Number(s.multiplier.replace(",", ".")) || 0 });
+const multiplierLabel = (n: number) => `${n.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}×`;
+
+const PREORDER_OPTIONS: { id: PreorderSurge; label: string; hint: string }[] = [
+  { id: "opening", label: "Do horário de abertura", hint: "Quando a corrida será chamada" },
+  { id: "now", label: "Do horário do pedido", hint: "Como se fosse enviado na hora" },
+  { id: "always", label: "Sempre com tarifa dinâmica", hint: "Multiplicador fixo em toda encomenda" },
+  { id: "none", label: "Sem tarifa dinâmica", hint: "Encomendas pagam o frete normal" },
+];
 
 // Tempo estimado nos exemplos (a cotação real usa a rota pelas ruas).
 const AVG_KMH = 25;
@@ -44,11 +57,18 @@ function DeliveryForm({ initial }: { initial: DeliverySettings }) {
   const [address, setAddress] = useState<Address>(initial.store ?? EMPTY_ADDRESS);
   const [point, setPoint] = useState<GeoPoint | null>(initial.store && { lat: initial.store.lat, lng: initial.store.lng });
   const [pricing, setPricing] = useState<PricingForm>(toForm(initial.pricing));
+  const [surges, setSurges] = useState<SurgeForm[]>((initial.surges ?? []).map(toSurgeForm));
+  const [preorderSurge, setPreorderSurge] = useState<PreorderSurge>(initial.preorderSurge ?? "opening");
+  const [preorderMultiplier, setPreorderMultiplier] = useState(String(initial.preorderMultiplier ?? 1.5).replace(".", ","));
   const [locating, setLocating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const values = fromForm(pricing);
+  const surgeValues = surges.map(fromSurgeForm);
+  const payload = JSON.stringify({ store: { ...address, ...point }, pricing: values, surges: surgeValues, preorderSurge, preorderMultiplier });
+  const [savedPayload, setSavedPayload] = useState(payload);
+  const dirty = payload !== savedPayload;
 
   async function locate() {
     setLocating(true);
@@ -68,7 +88,8 @@ function DeliveryForm({ initial }: { initial: DeliverySettings }) {
     setSaving(true);
     setErrors({});
     try {
-      await adminFetch("/api/admin/delivery", { method: "PUT", body: JSON.stringify({ store: { ...address, ...point }, pricing: values }) });
+      await adminFetch("/api/admin/delivery", { method: "PUT", body: payload });
+      setSavedPayload(payload);
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (e) {
@@ -140,6 +161,21 @@ function DeliveryForm({ initial }: { initial: DeliverySettings }) {
               </button>
             ))}
           </div>
+          {preorderSurge === "always" && (
+            <div className="mt-3 max-w-48">
+              <Field label="Multiplicador das encomendas" error={errors.preorderMultiplier}>
+                <span className="relative block">
+                  <input
+                    className="input pr-8!"
+                    inputMode="decimal"
+                    value={preorderMultiplier}
+                    onChange={(e) => setPreorderMultiplier(e.target.value.replace(/[^\d.,]/g, ""))}
+                  />
+                  <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm text-muted">×</span>
+                </span>
+              </Field>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             {PRICING_FIELDS.map(({ key, label, hint, unit }) => (
               <Field key={key} label={label} hint={hint} error={errors[key]}>
@@ -180,7 +216,85 @@ function DeliveryForm({ initial }: { initial: DeliverySettings }) {
           </table>
         </section>
 
-        <Simulator from={point} pricing={values} />
+        <section className="card p-5">
+          <h2 className="mb-1 flex items-center gap-2 font-semibold"><Clock className="size-5 text-brand" /> Tarifa dinâmica por horário</h2>
+          <p className="mb-4 text-sm text-muted">
+            Nos horários de pico a Uber cobra mais. Dentro de cada faixa (horário de Brasília) a corrida é multiplicada — ex.: 1,5× = 50% mais cara. A taxa adicional da loja não é multiplicada.
+          </p>
+          {surges.length > 0 && (
+            <div className="mb-3 flex flex-col gap-3">
+              {surges.map((s, i) => {
+                const set = (patch: Partial<SurgeForm>) => setSurges(surges.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+                return (
+                  <div key={i}>
+                    <div className="grid grid-cols-[1fr_1fr_1fr_auto] items-end gap-2">
+                      <Field label="Das">
+                        <input type="time" className="input px-3!" value={s.start} onChange={(e) => set({ start: e.target.value })} />
+                      </Field>
+                      <Field label="Até">
+                        <input type="time" className="input px-3!" value={s.end} onChange={(e) => set({ end: e.target.value })} />
+                      </Field>
+                      <Field label="Multiplicador">
+                        <span className="relative block">
+                          <input
+                            className="input pr-8!"
+                            inputMode="decimal"
+                            value={s.multiplier}
+                            onChange={(e) => set({ multiplier: e.target.value.replace(/[^\d.,]/g, "") })}
+                          />
+                          <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm text-muted">×</span>
+                        </span>
+                      </Field>
+                      <button onClick={() => setSurges(surges.filter((_, j) => j !== i))} className="btn-ghost px-3!" aria-label="Remover faixa">
+                        <Trash2 className="size-4 text-red-400" />
+                      </button>
+                    </div>
+                    {errors[`surge${i}`] && <p className="mt-1 text-sm text-red-400">{errors[`surge${i}`]}</p>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <button onClick={() => setSurges([...surges, { start: "18:00", end: "21:00", multiplier: "1,5" }])} className="btn-ghost w-full py-2.5! text-sm">
+            <Plus className="size-4 text-brand" /> Adicionar faixa de horário
+          </button>
+          {surges.length > 0 && (
+            <p className="mt-3 text-xs text-muted">
+              Se a faixa terminar antes de começar (ex.: 22:00 até 02:00), ela atravessa a meia-noite. Faixas sobrepostas usam o maior multiplicador.
+            </p>
+          )}
+
+          <h3 className="mb-2 mt-5 text-sm font-semibold">Com a loja fechada (encomendas), usar a tarifa dinâmica…</h3>
+          <div className="grid grid-cols-2 gap-2">
+            {PREORDER_OPTIONS.map((o) => (
+              <button
+                key={o.id}
+                onClick={() => setPreorderSurge(o.id)}
+                className={`rounded-2xl border p-3 text-left text-sm transition ${preorderSurge === o.id ? "border-brand bg-brand/10" : "border-line bg-surface-2 hover:border-brand/50"}`}
+              >
+                <span className={`block font-semibold ${preorderSurge === o.id ? "text-brand" : ""}`}>{o.label}</span>
+                <span className="mt-0.5 block text-xs text-muted">{o.hint}</span>
+              </button>
+            ))}
+          </div>
+          {preorderSurge === "always" && (
+            <div className="mt-3 max-w-48">
+              <Field label="Multiplicador das encomendas" error={errors.preorderMultiplier}>
+                <span className="relative block">
+                  <input
+                    className="input pr-8!"
+                    inputMode="decimal"
+                    value={preorderMultiplier}
+                    onChange={(e) => setPreorderMultiplier(e.target.value.replace(/[^\d.,]/g, ""))}
+                  />
+                  <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm text-muted">×</span>
+                </span>
+              </Field>
+            </div>
+          )}
+        </section>
+
+        <Simulator from={point} pricing={values} surges={surgeValues} />
       </div>
 
       {/* Barra de salvar */}
@@ -190,6 +304,7 @@ function DeliveryForm({ initial }: { initial: DeliverySettings }) {
             <p className="text-sm text-red-400">{errors.form ?? "Revise os campos destacados"}</p>
           )}
           {errors.location && <p className="text-sm text-red-400">{errors.location}</p>}
+          {dirty && Object.keys(errors).length === 0 && <p className="text-sm text-brand">Alterações não salvas — o checkout só usa o que for salvo</p>}
           <button onClick={save} disabled={saving} className="btn-brand py-2.5!">
             {saving ? <Loader2 className="size-4 animate-spin" /> : saved ? <Check className="size-4" /> : <Save className="size-4" />}
             {saved ? "Salvo!" : "Salvar alterações"}
@@ -200,8 +315,9 @@ function DeliveryForm({ initial }: { initial: DeliverySettings }) {
   );
 }
 
-function Simulator({ from, pricing }: { from: GeoPoint | null; pricing: DeliveryPricing }) {
+function Simulator({ from, pricing, surges }: { from: GeoPoint | null; pricing: DeliveryPricing; surges: DeliverySurge[] }) {
   const [address, setAddress] = useState<Address>(EMPTY_ADDRESS);
+  const [time, setTime] = useState(() => nowInStore());
   const [result, setResult] = useState<{ distanceKm: number; durationMin: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -218,7 +334,8 @@ function Simulator({ from, pricing }: { from: GeoPoint | null; pricing: Delivery
     }
   }
 
-  const quote = result && deliveryFee(pricing, result.distanceKm, result.durationMin);
+  const surge = /^\d{2}:\d{2}$/.test(time) ? surgeAt(surges, time) : 1;
+  const quote = result && deliveryFee(pricing, result.distanceKm, result.durationMin, 0, surge);
   return (
     <section className="card p-5">
       <h2 className="mb-1 font-semibold">Simular entrega</h2>
@@ -230,6 +347,11 @@ function Simulator({ from, pricing }: { from: GeoPoint | null; pricing: Delivery
           setResult(null);
         }}
       />
+      <div className="mt-3">
+        <Field label="Horário do pedido" hint={surge !== 1 ? `Tarifa dinâmica ativa: ${multiplierLabel(surge)}` : "Sem tarifa dinâmica neste horário"}>
+          <input type="time" className="input" value={time} onChange={(e) => setTime(e.target.value)} />
+        </Field>
+      </div>
       <button onClick={simulate} disabled={!from || !isAddressComplete(address) || loading} className="btn-ghost mt-4 w-full">
         {loading && <Loader2 className="size-4 animate-spin" />} {from ? "Calcular frete" : "Localize a loja primeiro"}
       </button>

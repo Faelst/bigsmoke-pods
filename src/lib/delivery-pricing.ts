@@ -1,5 +1,6 @@
 import { onlyDigits } from "./format";
-import type { Address, DeliveryPricing, DeliveryQuote } from "./types";
+import { nowInStore, TIME_RE, toMinutes } from "./hours";
+import type { Address, DeliveryPricing, DeliveryQuote, DeliverySurge } from "./types";
 
 // Valores de referência públicos da Uber Flash (podem estar desatualizados e
 // variam por cidade/demanda) — o admin ajusta tudo no painel.
@@ -16,16 +17,29 @@ export const UBER_PRESETS = {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-// Mesma conta do app: base + km + minutos, nunca abaixo do mínimo.
-export function deliveryFee(p: DeliveryPricing, distanceKm: number, durationMin: number, subtotal = 0): DeliveryQuote {
+// Mesma conta do app: base + km + minutos, nunca abaixo do mínimo; a tarifa
+// dinâmica multiplica a corrida (a taxa adicional da loja não).
+export function deliveryFee(p: DeliveryPricing, distanceKm: number, durationMin: number, subtotal = 0, surge = 1): DeliveryQuote {
   const free = p.freeAbove > 0 && subtotal >= p.freeAbove;
-  const ride = Math.max(p.minimum, p.base + p.perKm * distanceKm + p.perMin * durationMin);
+  const ride = Math.max(p.minimum, p.base + p.perKm * distanceKm + p.perMin * durationMin) * surge;
   return {
     fee: free ? 0 : round2(ride + p.extra),
     distanceKm: round2(distanceKm),
     durationMin: Math.max(1, Math.round(durationMin)),
     free,
+    ...(surge !== 1 && { surge }),
   };
+}
+
+// Multiplicador da faixa ativa no horário (o maior, se houver sobreposição).
+export function surgeAt(surges: DeliverySurge[] = [], hhmm = nowInStore()) {
+  const t = toMinutes(hhmm);
+  return surges.reduce((max, s) => {
+    const start = toMinutes(s.start);
+    const end = toMinutes(s.end);
+    const active = start <= end ? t >= start && t < end : t >= start || t < end;
+    return active ? Math.max(max, s.multiplier) : max;
+  }, 1);
 }
 
 export const formatCep = (v: string) => {
@@ -70,5 +84,18 @@ export function parsePricing(body: unknown) {
     data[k] = round2(n);
   }
   if (!errors.maxKm && data.maxKm < 1) errors.maxKm = "Mínimo de 1 km";
+  return { data, errors, ok: Object.keys(errors).length === 0 };
+}
+
+export function parseSurges(body: unknown) {
+  const list = Array.isArray(body) ? body.slice(0, 20) : [];
+  const errors: Record<string, string> = {};
+  const data: DeliverySurge[] = list.map((raw, i) => {
+    const b = (raw ?? {}) as Record<string, unknown>;
+    const s = { start: str(b.start, 5), end: str(b.end, 5), multiplier: round2(Number(String(b.multiplier ?? "").replace(",", "."))) };
+    if (!TIME_RE.test(s.start) || !TIME_RE.test(s.end) || s.start === s.end) errors[`surge${i}`] = "Horário inválido";
+    else if (!Number.isFinite(s.multiplier) || s.multiplier <= 0 || s.multiplier > 10) errors[`surge${i}`] = "Multiplicador entre 0,1 e 10";
+    return s;
+  });
   return { data, errors, ok: Object.keys(errors).length === 0 };
 }
