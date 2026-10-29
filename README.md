@@ -73,5 +73,5 @@ Admin (exige sessão de admin): `/api/admin/stats`, `/api/admin/orders[/:id]`, `
 - Pagamentos são simulados. Para produção, integre um PSP (Mercado Pago, Pagar.me, Asaas…) e confirme o PIX via webhook.
 - O status dos pedidos é controlado pelo admin; PIX não pago em 15 min é cancelado automaticamente.
 - Recuperação de senha por e-mail ainda não existe (precisa de um serviço de envio, ex.: Resend).
-- O arquivo JSON e os uploads em `data/` não funcionam em hosts serverless (ex.: Vercel); troque `src/lib/db.ts`
-  por um banco real (Postgres + Prisma/Drizzle) e os uploads por um storage (S3, Vercel Blob, Cloudinary).
+- Na Vercel use Postgres (`DATABASE_URL`, veja "Deploy na Vercel"). O banco guarda tudo em um documento jsonb, ótimo
+  para uma loja pequena; com muito volume, migre para tabelas (Prisma/Drizzle) e imagens para um storage (S3, Vercel Blob).
