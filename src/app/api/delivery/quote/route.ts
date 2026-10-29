@@ -7,8 +7,8 @@ export async function POST(req: Request) {
   const address = parseAddress(body.address);
   if (!address.ok) return Response.json({ errors: address.errors }, { status: 400 });
   try {
-    const { quote } = await quoteDelivery(address.data, Math.max(0, Number(body.subtotal) || 0));
-    return Response.json({ quote });
+    const { quote, preorder } = await quoteDelivery(address.data, Math.max(0, Number(body.subtotal) || 0));
+    return Response.json({ quote, preorder });
   } catch (e) {
     if (e instanceof DeliveryError) return Response.json({ error: e.message }, { status: e.status });
     throw e;

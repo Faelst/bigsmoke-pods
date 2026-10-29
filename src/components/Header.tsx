@@ -7,13 +7,15 @@ import { useEffect } from "react";
 import { ShoppingBag, User } from "lucide-react";
 import { cart, useCart, useCartUI } from "@/lib/cart";
 import { useSession } from "@/lib/session";
-import { SITE } from "@/lib/site";
+import { instagramUrl, SITE } from "@/lib/site";
+import { useStoreInfo } from "@/lib/store-info";
 import { InstagramIcon } from "./icons";
 
 export function Header() {
   const { count } = useCart();
   const { bump } = useCartUI();
   const { customer } = useSession();
+  const { social } = useStoreInfo();
   const controls = useAnimationControls();
 
   useEffect(() => {
@@ -32,13 +34,13 @@ export function Header() {
 
         <nav className="ml-6 hidden items-center gap-6 text-sm text-muted md:flex">
           <Link href="/" className="transition hover:text-white">Produtos</Link>
-          <Link href="/conta" className="transition hover:text-white">Meus pedidos</Link>
-          <a href={SITE.instagramUrl} target="_blank" rel="noreferrer" className="transition hover:text-white">Instagram</a>
+          <Link href="/pedidos" className="transition hover:text-white">Meus pedidos</Link>
+          <a href={instagramUrl(social.instagram)} target="_blank" rel="noreferrer" className="transition hover:text-white">Instagram</a>
         </nav>
 
         <div className="ml-auto flex items-center gap-2">
           <a
-            href={SITE.instagramUrl}
+            href={instagramUrl(social.instagram)}
             target="_blank"
             rel="noreferrer"
             aria-label="Instagram"

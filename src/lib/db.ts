@@ -5,7 +5,9 @@ import { randomUUID } from "crypto";
 import { Pool, type PoolClient } from "pg";
 import { SEED_PRODUCTS } from "./products";
 import { UBER_PRESETS } from "./delivery-pricing";
-import type { Admin, DeliverySettings, Order, Product, StoredCustomer } from "./types";
+import { ALWAYS_OPEN } from "./hours";
+import { DEFAULT_SOCIAL } from "./site";
+import type { Admin, DeliverySettings, Order, Product, StoreSettings, StoredCustomer } from "./types";
 
 // Banco de dados como um documento JSON:
 // - com DATABASE_URL (ex.: Neon na Vercel): uma linha jsonb no Postgres, com lock por transação;
@@ -19,6 +21,7 @@ export type Schema = {
   admins: Admin[];
   adminSessions: Session[];
   delivery: DeliverySettings;
+  settings: StoreSettings;
 };
 
 export const DATA_DIR = path.join(process.cwd(), "data");
@@ -31,15 +34,23 @@ function seedProducts(): Product[] {
   return SEED_PRODUCTS.map((p) => ({ ...p, id: randomUUID(), active: true, createdAt: now }));
 }
 
+// Selos antigos em texto viraram marcações próprias.
+function migrateBadge(p: Product): Product {
+  if (p.badge === "Mais vendido") return { ...p, badge: undefined, bestseller: true };
+  if (p.badge === "Novo" || p.badge === "Novidade") return { ...p, badge: undefined, isNew: true };
+  return p;
+}
+
 function normalize(raw: Partial<Schema>): Schema {
   return {
     customers: raw.customers ?? [],
     sessions: raw.sessions ?? [],
     orders: raw.orders ?? [],
-    products: raw.products ?? seedProducts(),
+    products: (raw.products ?? seedProducts()).map(migrateBadge),
     admins: raw.admins ?? [],
     adminSessions: raw.adminSessions ?? [],
     delivery: raw.delivery ?? { store: null, pricing: { ...UBER_PRESETS.moto.pricing } },
+    settings: { ...raw.settings, hours: raw.settings?.hours ?? ALWAYS_OPEN, social: { ...DEFAULT_SOCIAL, ...raw.settings?.social } },
   };
 }
 

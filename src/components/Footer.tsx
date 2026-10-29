@@ -1,8 +1,12 @@
+"use client";
+
 import Image from "next/image";
-import { SITE, whatsappLink } from "@/lib/site";
-import { InstagramIcon, WhatsAppIcon } from "./icons";
+import { instagramUrl, SITE, tiktokUrl, whatsappLink } from "@/lib/site";
+import { useStoreInfo } from "@/lib/store-info";
+import { InstagramIcon, TikTokIcon, WhatsAppIcon } from "./icons";
 
 export function Footer() {
+  const { social } = useStoreInfo();
   return (
     <footer className="mt-20 border-t border-line/60 bg-surface/50 pb-28 pt-10 md:pb-10">
       <div className="mx-auto flex max-w-6xl flex-col gap-8 px-4 md:flex-row md:items-center md:justify-between">
@@ -14,10 +18,15 @@ export function Footer() {
           </div>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row">
-          <a href={SITE.instagramUrl} target="_blank" rel="noreferrer" className="btn-ghost">
-            <InstagramIcon className="size-5 text-[#e1306c]" /> @{SITE.instagram}
+          <a href={instagramUrl(social.instagram)} target="_blank" rel="noreferrer" className="btn-ghost">
+            <InstagramIcon className="size-5 text-[#e1306c]" /> @{social.instagram}
           </a>
-          <a href={whatsappLink()} target="_blank" rel="noreferrer" className="btn-ghost">
+          {social.tiktok && (
+            <a href={tiktokUrl(social.tiktok)} target="_blank" rel="noreferrer" className="btn-ghost">
+              <TikTokIcon className="size-5" /> TikTok
+            </a>
+          )}
+          <a href={whatsappLink(social.whatsapp)} target="_blank" rel="noreferrer" className="btn-ghost">
             <WhatsAppIcon className="size-5 text-[#25D366]" /> WhatsApp
           </a>
         </div>

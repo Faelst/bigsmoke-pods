@@ -4,13 +4,14 @@ import Image from "next/image";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { AtSign, Bike, ChevronRight, CreditCard, Link2, Loader2, Mail, Navigation, QrCode, Search } from "lucide-react";
+import { AtSign, Bike, ChevronRight, Clock, Link2, Loader2, Mail, Navigation, Search } from "lucide-react";
 import { adminFetch, useAdminData } from "@/lib/admin-client";
 import { brl, formatDate, formatPhone, onlyDigits } from "@/lib/format";
 import { normalize } from "@/lib/products";
 import { STATUS_FLOW, STATUS_LABEL, type Order, type OrderStatus } from "@/lib/types";
 import { StatusBadge, StatusTimeline } from "@/components/OrderStatus";
 import { OrderTotals } from "@/components/OrderTotals";
+import { PaymentLabel, paymentShort } from "@/components/PaymentLabel";
 import { WhatsAppIcon } from "@/components/icons";
 import { PageTitle, Sheet } from "@/components/admin/ui";
 
@@ -94,6 +95,7 @@ export function OrdersAdmin() {
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                         <span className="font-semibold">#{o.code}</span>
                         <StatusBadge status={o.status} />
+                        {o.preorder && <PreorderBadge />}
                       </div>
                       <p className="mt-1 truncate text-sm text-muted">
                         {o.customer?.name ?? "—"} • {formatDate(o.createdAt)}
@@ -101,7 +103,7 @@ export function OrdersAdmin() {
                     </div>
                     <div className="text-right">
                       <p className="font-semibold">{brl(o.total)}</p>
-                      <p className="text-xs text-muted">{o.payment.method === "pix" ? "PIX" : "Cartão"}</p>
+                      <p className="text-xs text-muted">{paymentShort(o.payment)}</p>
                     </div>
                     <ChevronRight className="size-4 shrink-0 text-muted" />
                   </button>
@@ -174,6 +176,13 @@ function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated: (o: A
         <StatusBadge status={order.status} />
         <span className="text-sm text-muted">{formatDate(order.createdAt)}</span>
       </div>
+
+      {order.preorder && (
+        <p className="flex items-center gap-2 rounded-2xl border border-brand/40 bg-brand/5 p-3 text-sm">
+          <Clock className="size-4 shrink-0 text-brand" />
+          Encomenda feita com a loja fechada{order.preorder.opensAt && ` — enviar a partir de ${formatDate(order.preorder.opensAt)}`}.
+        </p>
+      )}
 
       <section>
         <h3 className="mb-2 text-sm font-semibold text-muted">Alterar status</h3>
@@ -250,8 +259,12 @@ function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated: (o: A
       {c && (
         <section className="rounded-2xl bg-surface-2 p-4 text-sm">
           <h3 className="mb-2 font-semibold">{c.name}</h3>
-          <p className="flex items-center gap-2 text-muted"><Mail className="size-4" /> {c.email}</p>
-          <p className="mt-1 flex items-center gap-2 text-muted"><AtSign className="size-4" /> {c.instagram}</p>
+          {c.email ? (
+            <p className="flex items-center gap-2 text-muted"><Mail className="size-4" /> {c.email}</p>
+          ) : (
+            <p className="text-muted">Comprou sem conta</p>
+          )}
+          {c.instagram && <p className="mt-1 flex items-center gap-2 text-muted"><AtSign className="size-4" /> {c.instagram}</p>}
           <div className="mt-3 grid grid-cols-2 gap-2">
             <a
               href={`https://api.whatsapp.com/send?phone=55${c.phone}&text=${encodeURIComponent(`Olá ${c.name.split(" ")[0]}! Sobre seu pedido #${order.code} na Big Smoke Pods:`)}`}
@@ -261,9 +274,11 @@ function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated: (o: A
             >
               <WhatsAppIcon className="size-4 text-[#25D366]" /> {formatPhone(c.phone)}
             </a>
-            <a href={`https://www.instagram.com/${c.instagram}`} target="_blank" rel="noreferrer" className="btn-ghost py-2.5! text-xs">
-              <AtSign className="size-4 text-[#e1306c]" /> Instagram
-            </a>
+            {c.instagram && (
+              <a href={`https://www.instagram.com/${c.instagram}`} target="_blank" rel="noreferrer" className="btn-ghost py-2.5! text-xs">
+                <AtSign className="size-4 text-[#e1306c]" /> Instagram
+              </a>
+            )}
           </div>
         </section>
       )}
@@ -295,11 +310,7 @@ function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated: (o: A
         )}
         <div className="mt-3 flex items-center justify-between">
           <span className="flex items-center gap-2 text-sm text-muted">
-            {order.payment.method === "pix" ? (
-              <><QrCode className="size-4" /> PIX</>
-            ) : (
-              <><CreditCard className="size-4" /> {order.payment.brand} •••• {order.payment.last4} ({order.payment.installments}x)</>
-            )}
+            <PaymentLabel payment={order.payment} />
           </span>
           <span className="font-display text-xl text-brand">{brl(order.total)}</span>
         </div>
@@ -310,5 +321,13 @@ function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated: (o: A
         <StatusTimeline order={order} />
       </section>
     </div>
+  );
+}
+
+function PreorderBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-brand/15 px-2 py-0.5 text-xs font-semibold text-brand">
+      <Clock className="size-3" /> Encomenda
+    </span>
   );
 }

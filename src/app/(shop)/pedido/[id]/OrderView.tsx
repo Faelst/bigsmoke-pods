@@ -2,36 +2,33 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Bike, Check, ChevronLeft, Copy, CreditCard, ExternalLink, Loader2, QrCode } from "lucide-react";
+import { Bike, Check, ChevronLeft, Clock, Copy, ExternalLink, Loader2 } from "lucide-react";
 import { brl, formatDate } from "@/lib/format";
 import { formatAddress } from "@/lib/delivery-pricing";
 import { whatsappLink } from "@/lib/site";
+import { useStoreInfo } from "@/lib/store-info";
 import type { Order } from "@/lib/types";
 import { StatusBadge, StatusTimeline } from "@/components/OrderStatus";
 import { OrderTotals } from "@/components/OrderTotals";
+import { PaymentLabel } from "@/components/PaymentLabel";
 import { WhatsAppIcon } from "@/components/icons";
 
 export function OrderView({ id }: { id: string }) {
-  const router = useRouter();
   const [order, setOrder] = useState<Order | null>(null);
   const [pixQr, setPixQr] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [justPaid, setJustPaid] = useState(false);
+  const { social } = useStoreInfo();
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/orders/${id}`);
-    if (res.status === 401) {
-      router.replace(`/entrar?next=/pedido/${id}`);
-      return;
-    }
     const data = await res.json();
     if (!res.ok) return setError(data.error);
     setOrder(data.order);
     setPixQr(data.pixQr);
-  }, [id, router]);
+  }, [id]);
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -50,7 +47,7 @@ export function OrderView({ id }: { id: string }) {
     return (
       <div className="mx-auto max-w-md px-4 py-20 text-center text-muted">
         {error}
-        <Link href="/conta" className="btn-ghost mt-6 flex">Meus pedidos</Link>
+        <Link href="/pedidos" className="btn-ghost mt-6 flex">Meus pedidos</Link>
       </div>
     );
   }
@@ -59,11 +56,11 @@ export function OrderView({ id }: { id: string }) {
   const waitingPix = order.payment.method === "pix" && order.status === "aguardando_pagamento";
   const waText = `Olá! Acabei de fazer o pedido #${order.code} no site Big Smoke Pods.\n\n${order.items
     .map((i) => `• ${i.qty}x ${i.name} (${i.flavor})`)
-    .join("\n")}\n\nTotal: ${brl(order.total)}${order.address ? `\nEntrega: ${formatAddress(order.address)}` : ""}\nPode me avisar quando sair? 🚀`;
+    .join("\n")}\n\nTotal: ${brl(order.total)}${order.preorder ? "\nÉ uma encomenda (loja estava fechada)." : ""}${order.address ? `\nEntrega: ${formatAddress(order.address)}` : ""}\nPode me avisar quando sair? 🚀`;
 
   return (
     <div className="mx-auto max-w-3xl px-4 pt-4">
-      <Link href="/conta" className="inline-flex items-center gap-1 text-sm text-muted hover:text-white">
+      <Link href="/pedidos" className="inline-flex items-center gap-1 text-sm text-muted hover:text-white">
         <ChevronLeft className="size-4" /> Meus pedidos
       </Link>
 
@@ -114,6 +111,19 @@ export function OrderView({ id }: { id: string }) {
         />
       )}
 
+      {order.preorder && ["aguardando_pagamento", "pago", "em_separacao"].includes(order.status) && (
+        <div className="mt-5 flex gap-3 rounded-2xl border border-brand/40 bg-brand/5 p-4 text-sm">
+          <Clock className="size-5 shrink-0 text-brand" />
+          <div>
+            <p className="font-semibold">Encomenda</p>
+            <p className="mt-0.5 text-muted">
+              A loja estava fechada quando você pediu. Enviamos assim que abrirmos
+              {order.preorder.opensAt && ` (${formatDate(order.preorder.opensAt)})`} — se der, sai antes.
+            </p>
+          </div>
+        </div>
+      )}
+
       {order.status === "saiu_para_entrega" && <OnTheWay trackingUrl={order.trackingUrl} />}
 
       <div className="mt-5 grid gap-5 md:grid-cols-2">
@@ -139,15 +149,11 @@ export function OrderView({ id }: { id: string }) {
           <OrderTotals order={order} />
           <div className="mt-3 flex items-center justify-between">
             <span className="flex items-center gap-2 text-sm text-muted">
-              {order.payment.method === "pix" ? (
-                <><QrCode className="size-4" /> PIX</>
-              ) : (
-                <><CreditCard className="size-4" /> {order.payment.brand} •••• {order.payment.last4} ({order.payment.installments}x)</>
-              )}
+              <PaymentLabel payment={order.payment} />
             </span>
             <span className="font-display text-xl text-brand">{brl(order.total)}</span>
           </div>
-          <a href={whatsappLink(waText)} target="_blank" rel="noreferrer" className="btn-ghost mt-5 border-[#25D366]/40">
+          <a href={whatsappLink(social.whatsapp, waText)} target="_blank" rel="noreferrer" className="btn-ghost mt-5 border-[#25D366]/40">
             <WhatsAppIcon className="size-5 text-[#25D366]" /> Falar sobre o pedido no WhatsApp
           </a>
         </section>
