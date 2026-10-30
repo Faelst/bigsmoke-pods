@@ -1,6 +1,6 @@
 import { onlyDigits } from "./format";
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 type Input = Record<string, unknown>;
 const str = (v: unknown) => String(v ?? "").trim();
@@ -32,21 +32,13 @@ export function parseLogin(body: unknown) {
   return { data, errors, ok: Object.keys(errors).length === 0 };
 }
 
-export function luhn(num: string) {
-  let sum = 0;
-  for (let i = 0; i < num.length; i++) {
-    let d = Number(num[num.length - 1 - i]);
-    if (i % 2 === 1) d = d * 2 > 9 ? d * 2 - 9 : d * 2;
-    sum += d;
-  }
-  return num.length >= 13 && sum % 10 === 0;
-}
-
-export function cardBrand(num: string) {
-  if (/^4/.test(num)) return "Visa";
-  if (/^(5[1-5]|2[2-7])/.test(num)) return "Mastercard";
-  if (/^3[47]/.test(num)) return "Amex";
-  if (/^(4011|4312|4389|4514|4576|5041|5066|5067|509|6277|6362|6363|650|6516|6550)/.test(num)) return "Elo";
-  if (/^(606282|3841)/.test(num)) return "Hipercard";
-  return "Cartão";
+// CPF com os dois dígitos verificadores (sem sequências repetidas como 111.111.111-11).
+export function isCpf(cpf: string) {
+  if (!/^\d{11}$/.test(cpf) || /^(\d)\1{10}$/.test(cpf)) return false;
+  const digit = (len: number) => {
+    let sum = 0;
+    for (let i = 0; i < len; i++) sum += Number(cpf[i]) * (len + 1 - i);
+    return ((sum * 10) % 11) % 10;
+  };
+  return digit(9) === Number(cpf[9]) && digit(10) === Number(cpf[10]);
 }

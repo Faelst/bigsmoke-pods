@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Bike, Check, ChevronLeft, Clock, Copy, ExternalLink, Loader2 } from "lucide-react";
+import { Bike, Check, ChevronLeft, Clock, Copy, ExternalLink } from "lucide-react";
 import { brl, formatDate } from "@/lib/format";
 import { formatAddress } from "@/lib/delivery-pricing";
 import { whatsappLink } from "@/lib/site";
@@ -26,7 +26,11 @@ export function OrderView({ id }: { id: string }) {
     const res = await fetch(`/api/orders/${id}`);
     const data = await res.json();
     if (!res.ok) return setError(data.error);
-    setOrder(data.order);
+    // PIX confirmado enquanto a página estava aberta.
+    setOrder((prev) => {
+      if (prev?.status === "aguardando_pagamento" && data.order.status === "pago") setJustPaid(true);
+      return data.order;
+    });
     setPixQr(data.pixQr);
   }, [id]);
 
@@ -34,14 +38,16 @@ export function OrderView({ id }: { id: string }) {
     window.scrollTo(0, 0);
   }, []);
 
+  // Com PIX pendente confere a cada 5 s, para confirmar logo depois do pagamento.
+  const waiting = order?.status === "aguardando_pagamento";
   useEffect(() => {
     const first = setTimeout(load, 0);
-    const t = setInterval(load, 10_000);
+    const t = setInterval(load, waiting ? 5_000 : 10_000);
     return () => {
       clearTimeout(first);
       clearInterval(t);
     };
-  }, [load]);
+  }, [load, waiting]);
 
   if (error) {
     return (
@@ -97,18 +103,7 @@ export function OrderView({ id }: { id: string }) {
       </AnimatePresence>
 
       {waitingPix && order.payment.method === "pix" && (
-        <PixPanel
-          orderId={order.id}
-          code={order.payment.pixCode}
-          qr={pixQr}
-          expiresAt={order.payment.expiresAt}
-          total={order.total}
-          onPaid={(o) => {
-            setOrder(o);
-            setJustPaid(true);
-          }}
-          onExpired={load}
-        />
+        <PixPanel code={order.payment.pixCode} qr={pixQr} expiresAt={order.payment.expiresAt} total={order.total} onExpired={load} />
       )}
 
       {order.preorder && ["aguardando_pagamento", "pago", "em_separacao"].includes(order.status) && (
@@ -192,27 +187,13 @@ function OnTheWay({ trackingUrl }: { trackingUrl?: string }) {
   );
 }
 
-function PixPanel({
-  orderId, code, qr, expiresAt, total, onPaid, onExpired,
-}: {
-  orderId: string; code: string; qr: string | null; expiresAt: string; total: number;
-  onPaid: (o: Order) => void; onExpired: () => void;
-}) {
+function PixPanel({ code, qr, expiresAt, total, onExpired }: { code: string; qr: string | null; expiresAt: string; total: number; onExpired: () => void }) {
   const [copied, setCopied] = useState(false);
-  const [paying, setPaying] = useState(false);
   const remaining = useCountdown(expiresAt);
 
   useEffect(() => {
     if (remaining === 0) onExpired();
   }, [remaining, onExpired]);
-
-  async function simulatePayment() {
-    setPaying(true);
-    const res = await fetch(`/api/orders/${orderId}/pay`, { method: "POST" });
-    const data = await res.json();
-    setPaying(false);
-    if (res.ok) onPaid(data.order);
-  }
 
   const mm = String(Math.floor((remaining ?? 0) / 60)).padStart(2, "0");
   const ss = String((remaining ?? 0) % 60).padStart(2, "0");
@@ -254,9 +235,7 @@ function PixPanel({
             {copied ? <Check className="size-5" /> : <Copy className="size-5" />}
             {copied ? "Código copiado!" : "Copiar código PIX"}
           </button>
-          <button onClick={simulatePayment} disabled={paying} className="btn-ghost text-sm">
-            {paying && <Loader2 className="size-4 animate-spin" />} Simular pagamento (demo)
-          </button>
+          <p className="text-center text-xs text-muted">Depois de pagar, esta página confirma sozinha em alguns segundos.</p>
         </div>
       </div>
     </motion.section>

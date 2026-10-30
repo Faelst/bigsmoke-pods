@@ -40,12 +40,35 @@ no `.env.local` (veja `.env.example`). Para trocar a senha depois do primeiro lo
 - No checkout o cliente informa o CEP + número; o frete é calculado pela rota real (OSRM) da loja até o endereço e recalculado no servidor ao criar o pedido.
 - Serviços gratuitos usados: ViaCEP, Nominatim (OpenStreetMap) e OSRM. Para produção com volume, troque por Google Maps/Mapbox ou integre o Uber Direct (cotação oficial, exige contrato).
 
+## Pagamentos (Mercado Pago) — `/admin/pagamentos`
+
+PIX e cartão de crédito pelo Mercado Pago (Checkout Transparente via API de Orders `/v1/orders`, SDK `mercadopago` para Node).
+
+- **Cartão**: o formulário do checkout usa os Secure Fields do MercadoPago.js (número, validade e CVV ficam em iframes do
+  Mercado Pago e viram um token no navegador). O servidor cria a order com processamento automático (aprova ou recusa na hora).
+- **PIX**: o servidor cria a order e mostra o QR Code / copia e cola do Mercado Pago, com validade de 30 minutos.
+  A confirmação chega pelo webhook `POST /api/webhooks/mercadopago` (assinatura validada com `MP_WEBHOOK_SECRET`);
+  a página do pedido também consulta o pagamento enquanto ele está pendente, o que funciona sem webhook (ex.: localhost).
+- **Taxa de processamento**: porcentagem sobre o total (produtos + entrega), uma para o PIX e uma para cada número de
+  parcelas do cartão (1x a 12x). **Parcelamento por valor**: faixas "a partir de R$ X, até Nx"; abaixo da menor faixa, só à vista.
+  O total com a taxa é recalculado no servidor e o pedido é recusado se for diferente do que o cliente viu.
+
+Configuração:
+
+1. Em [Suas integrações](https://www.mercadopago.com.br/developers/panel/app), crie a aplicação (Checkout Transparente) e
+   copie a Public Key e o Access Token para `NEXT_PUBLIC_MP_PUBLIC_KEY` e `MP_ACCESS_TOKEN` (veja `.env.example`).
+2. Em **Webhooks**, cadastre `https://SEU-DOMINIO/api/webhooks/mercadopago`, evento **Order (Mercado Pago)**, e copie a
+   assinatura secreta para `MP_WEBHOOK_SECRET`.
+3. Cadastre uma chave PIX na conta do Mercado Pago (sem ela a API não gera PIX em produção).
+4. Na conta do Mercado Pago, deixe o parcelamento **sem juros para o comprador** (a loja absorve), senão o Mercado Pago
+   cobra juros do cliente além da taxa de processamento da loja.
+
 ## Deploy na Vercel
 
 A Vercel não permite gravar arquivos, então em produção o app usa Postgres:
 
 1. No projeto da Vercel: **Storage → Create Database → Neon (Postgres)** e conecte ao projeto (cria `DATABASE_URL`).
-2. Em **Settings → Environment Variables**, defina `ADMIN_EMAIL` e `ADMIN_PASSWORD`.
+2. Em **Settings → Environment Variables**, defina `ADMIN_EMAIL`, `ADMIN_PASSWORD` e as variáveis do Mercado Pago (veja "Pagamentos").
 3. Faça um novo deploy. As tabelas são criadas sozinhas no primeiro acesso e os produtos iniciais são cadastrados.
 
 Tudo (clientes, pedidos, produtos, configurações de entrega e imagens enviadas no admin) fica no Postgres.
@@ -60,18 +83,20 @@ Sem `DATABASE_URL`, o app usa `data/db.json` (desenvolvimento local).
 | `src/lib/auth.ts` / `admin-auth.ts` | Sessões do cliente e do admin (cookies httpOnly, senhas com scrypt) |
 | `src/lib/site.ts` | WhatsApp e Instagram da loja |
 | `src/lib/db.ts` / `uploads.ts` | Banco: Postgres com `DATABASE_URL`, senão arquivo `data/db.json` |
-| `src/lib/orders.ts` | Regras de pedido e mocks de pagamento |
+| `src/lib/orders.ts` | Regras de pedido e status do pagamento |
+| `src/lib/mercadopago.ts` / `mercadopago-client.ts` | Mercado Pago no servidor (SDK Node) e no navegador (Secure Fields) |
+| `src/lib/payment-fees.ts` | Taxa de processamento e parcelas liberadas por valor |
 | `src/app/api/*` | Backend (route handlers) |
 
 API: `GET /api/products?q=&brand=`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/me`,
-`POST /api/auth/register`, `GET|POST /api/orders`, `GET /api/orders/:id`, `POST /api/orders/:id/pay` (simula o PIX).
+`POST /api/auth/register`, `GET|POST /api/orders`, `GET /api/orders/:id`, `POST /api/webhooks/mercadopago`.
 Admin (exige sessão de admin): `/api/admin/stats`, `/api/admin/orders[/:id]`, `/api/admin/products[/:id]`,
-`/api/admin/customers`, `/api/admin/uploads`.
+`/api/admin/customers`, `/api/admin/uploads`, `/api/admin/payments`.
 
 ## Mocks e próximos passos para produção
 
-- Pagamentos são simulados. Para produção, integre um PSP (Mercado Pago, Pagar.me, Asaas…) e confirme o PIX via webhook.
-- O status dos pedidos é controlado pelo admin; PIX não pago em 15 min é cancelado automaticamente.
+- O status dos pedidos é controlado pelo admin; PIX não pago em 30 min é cancelado automaticamente.
+- Estornos ainda são feitos pelo painel do Mercado Pago (o webhook cancela o pedido quando o pagamento é estornado).
 - Recuperação de senha por e-mail ainda não existe (precisa de um serviço de envio, ex.: Resend).
 - Na Vercel use Postgres (`DATABASE_URL`, veja "Deploy na Vercel"). O banco guarda tudo em um documento jsonb, ótimo
   para uma loja pequena; com muito volume, migre para tabelas (Prisma/Drizzle) e imagens para um storage (S3, Vercel Blob).

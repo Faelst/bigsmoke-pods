@@ -1,10 +1,10 @@
 import { connection } from "next/server";
 import { storeStatus } from "@/lib/hours";
-import { getStoreSettings } from "@/lib/settings";
+import { getPaymentFees, getStoreSettings } from "@/lib/settings";
 
-// Situação da loja (aberta/fechada) e redes sociais para o site.
+// Situação da loja (aberta/fechada), redes sociais e taxas de pagamento para o site.
 export async function GET() {
   await connection(); // sempre na hora do pedido: depende do relógio e do admin
-  const { hours, social, closedUntil } = await getStoreSettings();
-  return Response.json({ status: storeStatus(hours, new Date(), closedUntil), hours, social });
+  const [{ hours, social, closedUntil }, paymentFees] = await Promise.all([getStoreSettings(), getPaymentFees()]);
+  return Response.json({ status: storeStatus(hours, new Date(), closedUntil), hours, social, paymentFees });
 }

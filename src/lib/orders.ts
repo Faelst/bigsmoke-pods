@@ -1,8 +1,10 @@
 import "server-only";
 import { randomUUID } from "crypto";
 import { query, transaction, type Schema } from "./db";
-import { cardBrand, luhn } from "./validation";
-import { onlyDigits } from "./format";
+import { EMAIL_RE, isCpf } from "./validation";
+import { brl, onlyDigits } from "./format";
+import { MAX_INSTALLMENTS, maxInstallmentsFor, paymentFee } from "./payment-fees";
+import { createCardOrder, createPixOrder, getMpOrder, mpConfigured, rejectionMessage, undoMpOrder, type CardInput, type MpOrder } from "./mercadopago";
 import { deliveryFee, parseAddress } from "./delivery-pricing";
 import { DeliveryError, deliveryTiming, quoteDelivery } from "./delivery";
 import { STATUS_FLOW, STATUS_LABEL, type Contact, type Order, type OrderItem, type OrderStatus, type OrderSummary } from "./types";
@@ -71,24 +73,42 @@ export function trackOrders(phone: string, knownIds: string[]) {
   );
 }
 
-type CardInput = { number: string; name: string; expiry: string; cvv: string; installments: number };
 type CartLine = { slug: string; flavor: string; qty: number };
 type CreateInput = {
   items: CartLine[];
   contact: unknown;
   address: unknown;
-  method: "pix" | "card" | "wallet";
-  card?: CardInput;
-  wallet?: unknown;
+  method: "pix" | "card";
+  card?: unknown;
+  expectedTotal?: number; // total mostrado no checkout
 };
 
-function parseContact(raw: unknown): Contact {
+// O PIX do Mercado Pago aceita validade a partir de 30 minutos.
+const PIX_MINUTES = 30;
+
+function parseContact(raw: unknown): Contact & { email: string } {
   const b = (raw ?? {}) as Record<string, unknown>;
   const name = String(b.name ?? "").trim().replace(/\s+/g, " ").slice(0, 80);
   const phone = onlyDigits(String(b.phone ?? ""));
+  const email = String(b.email ?? "").trim().toLowerCase().slice(0, 120);
   if (name.length < 2) throw new OrderError("Informe seu nome");
   if (phone.length !== 10 && phone.length !== 11) throw new OrderError("Informe um WhatsApp válido com DDD");
-  return { name, phone };
+  if (!EMAIL_RE.test(email)) throw new OrderError("Informe um e-mail válido");
+  return { name, phone, email };
+}
+
+// O cartão chega tokenizado pelo Mercado Pago no navegador: aqui só o token, o CPF e o final do número.
+function parseCard(raw: unknown): CardInput {
+  const b = (raw ?? {}) as Record<string, unknown>;
+  const token = String(b.token ?? "");
+  const paymentMethodId = String(b.paymentMethodId ?? "");
+  const last4 = String(b.last4 ?? "");
+  const cpf = onlyDigits(String(b.cpf ?? ""));
+  const installments = Math.floor(Number(b.installments));
+  if (!/^[\w-]{8,100}$/.test(token) || !/^[a-z_]{2,30}$/.test(paymentMethodId)) throw new OrderError("Confira os dados do cartão");
+  if (!isCpf(cpf)) throw new OrderError("CPF do titular inválido");
+  if (!(installments >= 1 && installments <= MAX_INSTALLMENTS)) throw new OrderError("Número de parcelas inválido");
+  return { token, paymentMethodId, installments, cpf, last4: /^\d{4}$/.test(last4) ? last4 : "" };
 }
 
 // Preços sempre recalculados no servidor a partir do catálogo.
@@ -104,74 +124,111 @@ function priceItems(db: Schema, lines: CartLine[]): OrderItem[] {
 
 const sumItems = (items: OrderItem[]) => items.reduce((s, i) => s + i.price * i.qty, 0);
 
-function validateCard(card: CardInput | undefined) {
-  if (!card) throw new OrderError("Dados do cartão ausentes");
-  const number = onlyDigits(card.number ?? "");
-  if (!luhn(number)) throw new OrderError("Número do cartão inválido");
-  if (String(card.name ?? "").trim().length < 3) throw new OrderError("Nome impresso no cartão inválido");
-  const [mm, yy] = String(card.expiry ?? "").split("/").map(Number);
-  const expiry = new Date(2000 + yy, mm, 0, 23, 59);
-  if (!mm || mm > 12 || !yy || expiry.getTime() < Date.now()) throw new OrderError("Validade inválida");
-  if (!/^\d{3,4}$/.test(String(card.cvv ?? ""))) throw new OrderError("CVV inválido");
-  const installments = Math.min(Math.max(Number(card.installments) || 1, 1), 3);
-  // MOCK: cartões terminados em 0002 são recusados para testar o fluxo de erro.
-  if (number.endsWith("0002")) throw new OrderError("Pagamento recusado pela operadora", 402);
-  return { brand: cardBrand(number), last4: number.slice(-4), installments };
-}
+const BRANDS: Record<string, string> = { visa: "Visa", master: "Mastercard", amex: "Amex", elo: "Elo", hipercard: "Hipercard", cabal: "Cabal" };
+const brandLabel = (id?: string) => (id ? (BRANDS[id] ?? id[0].toUpperCase() + id.slice(1)) : "Cartão");
 
-function mockPixCode(code: string, total: number) {
-  const amount = total.toFixed(2);
-  return `00020126580014BR.GOV.BCB.PIX0136bigsmokepods-mock-${code.toLowerCase()}52040000530398654${String(amount.length).padStart(2, "0")}${amount}5802BR5914BIG SMOKE PODS6009SAO PAULO62070503***6304MOCK`;
+// Falha na API do Mercado Pago (fora do ar, token do cartão vencido…).
+function paymentError(e: unknown): never {
+  if (e instanceof OrderError) throw e;
+  console.error("[mercadopago] erro ao criar pagamento", e);
+  throw new OrderError("Não foi possível processar o pagamento agora. Tente novamente em instantes.", 502);
 }
 
 // customerId só existe quando o cliente está logado (a conta é opcional).
 export async function createOrder(customerId: string | null, input: CreateInput) {
+  if (!mpConfigured) throw new OrderError("Pagamentos indisponíveis no momento. Fale com a loja pelo WhatsApp.", 503);
   if (!Array.isArray(input?.items) || input.items.length === 0) throw new OrderError("Carrinho vazio");
   const contact = parseContact(input.contact);
-  const card = input.method === "card" ? validateCard(input.card) : null;
-  // MOCK: Apple Pay / Google Pay aprovados na hora (no real viria do gateway).
-  const wallet = input.method === "wallet" ? (input.wallet === "apple_pay" ? "apple_pay" : "google_pay") : null;
-  if (!card && !wallet && input.method !== "pix") throw new OrderError("Forma de pagamento inválida");
+  if (input.method !== "pix" && input.method !== "card") throw new OrderError("Forma de pagamento inválida");
+  const card = input.method === "card" ? parseCard(input.card) : null;
 
   if (!input.address) throw new OrderError("Informe o endereço de entrega");
   const address = parseAddress(input.address);
   if (!address.ok) throw new OrderError(Object.values(address.errors)[0]);
 
-  // Rota calculada fora da transação (chamadas externas são lentas).
+  // Rota calculada antes (chamadas externas são lentas).
   const estimate = sumItems(await query((db) => priceItems(db, input.items)));
   const { quote, point } = await quoteDelivery(address.data, estimate).catch((e) => {
     throw e instanceof DeliveryError ? new OrderError(e.message, e.status) : e;
   });
 
-  return transaction((db) => {
+  // Preços, frete e taxa de pagamento de agora: é esse valor que vai para o Mercado Pago.
+  const draft = await query((db) => {
     const items = priceItems(db, input.items);
     const subtotal = sumItems(items);
     const { surge, preorder } = deliveryTiming(db.delivery, db.settings);
     const delivery = deliveryFee(db.delivery.pricing, quote.distanceKm, quote.durationMin, subtotal, surge);
-    const total = Math.round((subtotal + delivery.fee) * 100) / 100;
-    const now = new Date();
-    const at = now.toISOString();
-    const code = `BSP${now.getTime().toString(36).toUpperCase().slice(-6)}`;
-    const base = { id: randomUUID(), code, ...(customerId && { customerId }), contact, items, subtotal, address: { ...address.data, ...point }, delivery, ...(preorder && { preorder }), total, createdAt: at };
-
-    // Guarda o endereço para preencher o próximo checkout.
-    const customer = db.customers.find((c) => c.id === customerId);
-    if (customer) customer.address = address.data;
-
-    const paid = { status: "pago" as const, history: [{ status: "aguardando_pagamento" as const, at }, { status: "pago" as const, at }] };
-    const order: Order = card
-      ? { ...base, payment: { method: "card", ...card, paidAt: at }, ...paid }
-      : wallet
-        ? { ...base, payment: { method: "wallet", wallet, paidAt: at }, ...paid }
-        : {
-          ...base,
-          payment: { method: "pix", pixCode: mockPixCode(code, total), expiresAt: new Date(now.getTime() + 15 * 60_000).toISOString() },
-          status: "aguardando_pagamento",
-          history: [{ status: "aguardando_pagamento", at }],
-        };
-    db.orders.push(order);
-    return order;
+    const base = Math.round((subtotal + delivery.fee) * 100) / 100;
+    if (card && card.installments > maxInstallmentsFor(db.paymentFees, base))
+      throw new OrderError("Esse número de parcelas não está disponível para o valor do pedido");
+    const charge = paymentFee(db.paymentFees, base, input.method, card?.installments);
+    return { items, subtotal, delivery, preorder, paymentFee: charge.fee, total: charge.total };
   });
+  // Preço, frete ou taxa mudaram desde que o cliente viu o total: não cobra um valor diferente.
+  if (input.expectedTotal !== undefined && Math.abs(Number(input.expectedTotal) - draft.total) > 0.01)
+    throw new OrderError(`O total do pedido foi atualizado para ${brl(draft.total)}. Confira o resumo e tente de novo.`, 409);
+
+  const now = new Date();
+  const at = now.toISOString();
+  const id = randomUUID();
+  const code = `BSP${now.getTime().toString(36).toUpperCase().slice(-6)}`;
+  const extras = [
+    { title: "Entrega", amount: draft.delivery.fee },
+    { title: "Taxa de processamento", amount: draft.paymentFee },
+  ];
+  const charge = { orderId: id, code, total: draft.total, contact, items: draft.items, extras };
+
+  let order: Order;
+  const base = {
+    id, code, ...(customerId && { customerId }), contact, items: draft.items, subtotal: draft.subtotal,
+    address: { ...address.data, ...point }, delivery: draft.delivery, ...(draft.preorder && { preorder: draft.preorder }),
+    ...(draft.paymentFee > 0 && { paymentFee: draft.paymentFee }), total: draft.total, createdAt: at,
+  };
+  if (card) {
+    const result = await createCardOrder({ ...charge, card }).catch(paymentError);
+    if (!result.approved) throw new OrderError(rejectionMessage(result.detail), 402);
+    const { mp } = result;
+    order = {
+      ...base,
+      payment: {
+        method: "card", brand: brandLabel(card.paymentMethodId), last4: card.last4,
+        installments: card.installments, mpId: mp.id, mpStatus: mp.status, paidAt: at,
+      },
+      status: "pago",
+      history: [{ status: "aguardando_pagamento", at }, { status: "pago", at }],
+    };
+  } else {
+    const mp = await createPixOrder({ ...charge, minutes: PIX_MINUTES }).catch(paymentError);
+    const payment = mp.transactions?.payments?.[0];
+    const pix = payment?.payment_method;
+    if (!pix?.qr_code) paymentError(new Error(`PIX sem QR Code (order ${mp.id}, status ${mp.status})`));
+    order = {
+      ...base,
+      payment: {
+        method: "pix", pixCode: pix.qr_code, ticketUrl: pix.ticket_url,
+        expiresAt: new Date(payment?.date_of_expiration ?? now.getTime() + PIX_MINUTES * 60_000).toISOString(), mpId: mp.id, mpStatus: mp.status,
+      },
+      status: "aguardando_pagamento",
+      history: [{ status: "aguardando_pagamento", at }],
+    };
+  }
+
+  try {
+    return await transaction((db) => {
+      // Guarda o endereço para preencher o próximo checkout.
+      const customer = db.customers.find((c) => c.id === customerId);
+      if (customer) customer.address = address.data;
+      db.orders.push(order);
+      return order;
+    });
+  } catch (e) {
+    // Cobrado mas sem pedido gravado: devolve o dinheiro (cartão) ou cancela o PIX.
+    console.error(`[mercadopago] pedido ${id} não foi gravado; desfazendo pagamento ${order.payment.mpId}`, e);
+    await undoMpOrder(order.payment.mpId!, order.payment.method === "card").catch((err) =>
+      console.error(`[mercadopago] FALHA ao desfazer o pagamento ${order.payment.mpId}: estorne pelo painel`, err),
+    );
+    throw e;
+  }
 }
 
 function setStatus(order: Order, status: OrderStatus) {
@@ -182,17 +239,43 @@ function setStatus(order: Order, status: OrderStatus) {
   order.history.push({ status, at });
 }
 
-// MOCK: simula a confirmação do PIX (no real viria de um webhook do PSP).
-export async function confirmPix(id: string) {
-  return transaction((db) => {
+// Aplica ao pedido o status da order no Mercado Pago (webhook ou consulta).
+// A order é sempre lida da API, nunca do corpo da notificação.
+export async function applyMpOrder(mp: MpOrder) {
+  const id = mp.external_reference;
+  const mpId = mp.id;
+  const changed = (o: Order | undefined) => !!o && o.payment.mpId === mpId && o.payment.mpStatus !== mp.status;
+  if (!id || !(await query((db) => changed(db.orders.find((o) => o.id === id))))) return;
+
+  await transaction((db) => {
     const order = db.orders.find((o) => o.id === id);
-    if (!order) throw new OrderError("Pedido não encontrado", 404);
-    expire(order);
-    if (order.payment.method !== "pix" || order.status !== "aguardando_pagamento")
-      throw new OrderError("Este pedido não aguarda pagamento PIX", 409);
-    setStatus(order, "pago");
-    return order;
+    if (!order || !changed(order)) return;
+    order.payment.mpStatus = mp.status;
+    if (mp.status === "processed") {
+      if (Math.abs(Number(mp.total_paid_amount ?? 0) - order.total) > 0.01) {
+        console.error(`[mercadopago] valor pago (${mp.total_paid_amount}) diferente do pedido ${order.code} (${order.total})`);
+        return;
+      }
+      // Também vale para o PIX pago no último segundo, depois de expirar aqui.
+      if (order.status === "aguardando_pagamento" || order.status === "cancelado") setStatus(order, "pago");
+    } else if (["cancelled", "failed", "expired"].includes(mp.status ?? "")) {
+      if (order.status === "aguardando_pagamento") setStatus(order, "cancelado");
+    } else if (["refunded", "charged_back"].includes(mp.status ?? "")) {
+      if (order.status !== "cancelado") setStatus(order, "cancelado");
+    }
   });
+}
+
+// Confere no Mercado Pago um PIX ainda pendente (funciona mesmo sem webhook, ex.: em localhost).
+export async function refreshPixPayment(order: Order) {
+  if (order.payment.method !== "pix" || order.status !== "aguardando_pagamento" || !order.payment.mpId || !mpConfigured) return order;
+  try {
+    await applyMpOrder(await getMpOrder(order.payment.mpId));
+  } catch (e) {
+    console.error(`[mercadopago] não foi possível consultar a order ${order.payment.mpId}`, e);
+    return order;
+  }
+  return (await getOrder(order.id)) ?? order;
 }
 
 // ---- Admin ----

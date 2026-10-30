@@ -9,7 +9,9 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@mercadopago/sdk-js": "^0.0.3",
     "lucide-react": "^1.63.0",
+    "mercadopago": "^3.6.1",
     "motion": "^14.7.1",
     "next": "16.4.3",
     "pg": "^8.23.1",
