@@ -7,6 +7,8 @@ import { Suspense } from "react";
 import { ChevronLeft, Droplets, Wind } from "lucide-react";
 import { getActiveProduct, listActiveProducts } from "@/lib/catalog";
 import { brl } from "@/lib/format";
+import { maxInstallmentsFor } from "@/lib/payment-fees";
+import { getPaymentFees } from "@/lib/settings";
 import { AddToCart } from "./AddToCart";
 
 export async function generateMetadata({ params }: PageProps<"/produto/[slug]">): Promise<Metadata> {
@@ -28,6 +30,10 @@ async function ProductContent({ params }: { params: PageProps<"/produto/[slug]">
   const product = await getActiveProduct((await params).slug);
   if (!product) notFound();
   const related = (await listActiveProducts()).filter((p) => p.slug !== product.slug).slice(0, 4);
+  // Parcelamento pelas faixas do admin (o valor final depende do carrinho e da entrega).
+  const fees = await getPaymentFees();
+  const installments = maxInstallmentsFor(fees, product.price);
+  const firstTier = fees.tiers[0];
 
   return (
     <div className="mx-auto max-w-6xl px-4 pt-4">
@@ -43,7 +49,11 @@ async function ProductContent({ params }: { params: PageProps<"/produto/[slug]">
           <span className="text-xs font-semibold uppercase tracking-[0.2em] text-leaf">{product.brand}</span>
           <h1 className="mt-1 font-display text-3xl leading-tight md:text-4xl">{product.name}</h1>
           <p className="mt-3 font-display text-3xl text-brand">{brl(product.price)}</p>
-          <p className="mt-1 text-sm text-muted">ou 3x de {brl(product.price / 3)} sem juros</p>
+          {installments > 1 ? (
+            <p className="mt-1 text-sm text-muted">ou em até {installments}x no cartão</p>
+          ) : (
+            firstTier && <p className="mt-1 text-sm text-muted">Parcele no cartão em compras a partir de {brl(firstTier.minTotal)}</p>
+          )}
           <div className="mt-5 grid grid-cols-2 gap-3">
             <div className="card flex items-center gap-3 p-4">
               <Wind className="size-6 text-brand" />
