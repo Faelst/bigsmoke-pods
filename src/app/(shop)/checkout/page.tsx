@@ -84,7 +84,8 @@ export default function CheckoutPage() {
   const identified = isContactComplete(contact);
   const delivery = useDeliveryQuote(address, total, identified);
   const quote = delivery?.quote;
-  const orderTotal = total + (quote?.fee ?? 0);
+  // Arredondado como no servidor (lib/orders.ts), para a taxa sair igual nos dois lados.
+  const orderTotal = Math.round((total + (quote?.fee ?? 0)) * 100) / 100;
   // Parcelas e taxa de processamento pela tabela do admin (o servidor confere de novo).
   const installments = paymentFees ? Math.min(installmentsDraft, maxInstallmentsFor(paymentFees, orderTotal)) : 1;
   const charge = paymentFees && paymentFee(paymentFees, orderTotal, method, method === "card" ? installments : 1);
