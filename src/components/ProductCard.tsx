@@ -8,6 +8,7 @@ import { brl } from "@/lib/format";
 import type { Product } from "@/lib/products";
 
 export function ProductCard({ product, index, onAdd }: { product: Product; index: number; onAdd: (p: Product) => void }) {
+  const soldOut = !product.flavors.some((f) => f.stock > 0);
   return (
     <motion.article
       layout
@@ -24,8 +25,11 @@ export function ProductCard({ product, index, onAdd }: { product: Product; index
           alt={product.name}
           fill
           sizes="(min-width: 1024px) 25vw, (min-width: 640px) 33vw, 50vw"
-          className="object-contain p-3 transition duration-500 group-hover:scale-110"
+          className={`object-contain p-3 transition duration-500 group-hover:scale-110 ${soldOut ? "opacity-50 grayscale" : ""}`}
         />
+        {soldOut && (
+          <span className="absolute inset-x-0 bottom-2 mx-auto w-fit rounded-full bg-black/80 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-white">Esgotado</span>
+        )}
         <span className="absolute left-2 top-2 flex flex-col items-start gap-1">
           {product.bestseller && (
             <span className="inline-flex items-center gap-1 rounded-full bg-brand px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-black">
@@ -55,8 +59,9 @@ export function ProductCard({ product, index, onAdd }: { product: Product; index
           <motion.button
             whileTap={{ scale: 0.85, rotate: 90 }}
             onClick={() => onAdd(product)}
-            aria-label={`Adicionar ${product.name}`}
-            className="grid size-10 place-items-center rounded-xl bg-brand text-black shadow-[0_6px_20px_-6px_rgb(255_178_0/0.7)]"
+            disabled={soldOut}
+            aria-label={soldOut ? `${product.name} esgotado` : `Adicionar ${product.name}`}
+            className="grid size-10 place-items-center rounded-xl bg-brand text-black shadow-[0_6px_20px_-6px_rgb(255_178_0/0.7)] disabled:bg-surface-2 disabled:text-muted disabled:shadow-none"
           >
             <Plus className="size-5" />
           </motion.button>

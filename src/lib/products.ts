@@ -4,6 +4,8 @@ export type { Product };
 
 type Seed = Omit<Product, "id" | "active" | "createdAt">;
 
+const none = (...names: string[]) => names.map((name) => ({ name, stock: 0 }));
+
 // Catálogo inicial: gravado no banco na primeira execução. Depois disso, edite pelo /admin.
 export const SEED_PRODUCTS: Seed[] = [
   {
@@ -15,7 +17,7 @@ export const SEED_PRODUCTS: Seed[] = [
     capacity: "20 mL",
     description: "40.000 puffs, capacidade de 20 mL. Tela digital com nível de bateria e líquido.",
     image: "/products/elfbar-bc-pro-40k.jpg",
-    flavors: ["Grape Ice", "Watermelon Ice", "Strawberry Kiwi", "Blue Razz Ice", "Menthol"],
+    flavors: none("Grape Ice", "Watermelon Ice", "Strawberry Kiwi", "Blue Razz Ice", "Menthol"),
     bestseller: true,
   },
   {
@@ -27,7 +29,7 @@ export const SEED_PRODUCTS: Seed[] = [
     capacity: "23 mL",
     description: "23.000 puffs, com intensidade ajustável em até 3 níveis, capacidade de 23 mL.",
     image: "/products/elfbar-23k.jpg",
-    flavors: ["Peach Ice", "Mango Ice", "Blueberry Ice", "Cherry Lemon"],
+    flavors: none("Peach Ice", "Mango Ice", "Blueberry Ice", "Cherry Lemon"),
   },
   {
     slug: "elfbar-bc-15k",
@@ -38,7 +40,7 @@ export const SEED_PRODUCTS: Seed[] = [
     capacity: "13 mL",
     description: "15.000 puffs, capacidade de 13 mL. Compacto e potente.",
     image: "/products/elfbar-bc-15k.png",
-    flavors: ["Watermelon Ice", "Strawberry Banana", "Cool Mint"],
+    flavors: none("Watermelon Ice", "Strawberry Banana", "Cool Mint"),
   },
   {
     slug: "ignite-v400-mix-boost",
@@ -49,7 +51,7 @@ export const SEED_PRODUCTS: Seed[] = [
     capacity: "18 mL",
     description: "40.000 puffs, dois sabores com intensidade controlável, capacidade de 18 mL.",
     image: "/products/ignite-v400.jpg",
-    flavors: ["Grape + Menthol", "Watermelon + Strawberry", "Passion Fruit + Mango"],
+    flavors: none("Grape + Menthol", "Watermelon + Strawberry", "Passion Fruit + Mango"),
     isNew: true,
   },
   {
@@ -61,7 +63,7 @@ export const SEED_PRODUCTS: Seed[] = [
     capacity: "18 mL",
     description: "30.000 puffs, capacidade de 18 mL. Design ultra slim.",
     image: "/products/ignite-v300.jpg",
-    flavors: ["Ice Mint", "Strawberry Ice", "Grape Ice", "Pineapple Ice"],
+    flavors: none("Ice Mint", "Strawberry Ice", "Grape Ice", "Pineapple Ice"),
   },
 ];
 
@@ -76,8 +78,11 @@ export function filterProducts(products: Product[], query: string, brand?: strin
   return products.filter(
     (p) =>
       (!brand || p.brand === brand) &&
-      (!q || normalize(`${p.name} ${p.brand} ${p.flavors.join(" ")}`).includes(q)),
+      (!q || normalize(`${p.name} ${p.brand} ${p.flavors.map((f) => f.name).join(" ")}`).includes(q)),
   );
 }
+
+// Primeiro sabor com saldo (ou o primeiro, se todos esgotaram).
+export const firstAvailable = (p: Product) => (p.flavors.find((f) => f.stock > 0) ?? p.flavors[0])?.name ?? "";
 
 export const brandsOf = (products: Product[]) => [...new Set(products.map((p) => p.brand))].sort();

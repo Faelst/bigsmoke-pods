@@ -4,12 +4,17 @@ import Image from "next/image";
 import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { ExternalLink, Flame, ImagePlus, Loader2, Pencil, Plus, Search, Sparkles, Trash2 } from "lucide-react";
+import { ExternalLink, Flame, ImagePlus, Loader2, Pencil, Plus, Search, Sparkles, Trash2, X } from "lucide-react";
 import { adminFetch, useAdminData } from "@/lib/admin-client";
 import { brl } from "@/lib/format";
 import { filterProducts } from "@/lib/products";
 import type { Product } from "@/lib/types";
 import { Field, PageTitle, Sheet, Toggle } from "@/components/admin/ui";
+
+type FlavorRow = { name: string; stock: string; reserved?: number };
+
+const totalStock = (p: Product) => p.flavors.reduce((s, f) => s + f.stock, 0);
+const totalReserved = (p: Product) => p.flavors.reduce((s, f) => s + (f.reserved ?? 0), 0);
 
 const TAGS = [
   { key: "bestseller", label: "Mais vendido", hint: "Selo e filtro “Mais vendidos” na loja", icon: Flame, on: "bg-brand text-black" },
@@ -61,7 +66,9 @@ export default function ProductsAdminPage() {
                 <p className="text-[10px] font-semibold uppercase tracking-widest text-leaf">{p.brand}</p>
                 <p className="truncate font-semibold">{p.name}</p>
                 <p className="truncate text-sm text-muted">
-                  <span className="font-semibold text-brand">{brl(p.price)}</span> • {p.flavors.length} sabores
+                  <span className="font-semibold text-brand">{brl(p.price)}</span> • {p.flavors.length} sabores •{" "}
+                  {totalStock(p) > 0 ? `${totalStock(p)} em estoque` : <span className="text-red-400">sem estoque</span>}
+                  {totalReserved(p) > 0 && <span className="text-brand"> ({totalReserved(p)} reservado{totalReserved(p) > 1 ? "s" : ""})</span>}
                   {!p.active && <span className="ml-1 rounded bg-line px-1.5 py-0.5 text-[10px] uppercase">Oculto</span>}
                 </p>
                 <div className="mt-1.5 flex gap-1.5">
@@ -116,12 +123,14 @@ function ProductForm({ product, onSaved, onDeleted }: { product: Product | null;
     capacity: product?.capacity ?? "",
     description: product?.description ?? "",
     image: product?.image ?? "",
-    flavors: product?.flavors.join(", ") ?? "",
     badge: product?.badge ?? "",
     bestseller: product?.bestseller ?? false,
     isNew: product?.isNew ?? false,
     active: product?.active ?? true,
   });
+  const [flavors, setFlavors] = useState<FlavorRow[]>(
+    product?.flavors.map((f) => ({ name: f.name, stock: String(f.stock), reserved: f.reserved })) ?? [{ name: "", stock: "" }],
+  );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -147,7 +156,7 @@ function ProductForm({ product, onSaved, onDeleted }: { product: Product | null;
     e.preventDefault();
     setSaving(true);
     try {
-      const payload = { ...v, price: Number(v.price.replace(",", ".")), flavors: v.flavors.split(",") };
+      const payload = { ...v, price: Number(v.price.replace(",", ".")), flavors: flavors.map(({ name, stock }) => ({ name, stock })) };
       const { product: saved } = await adminFetch<{ product: Product }>(product ? `/api/admin/products/${product.id}` : "/api/admin/products", {
         method: product ? "PATCH" : "POST",
         body: JSON.stringify(payload),
@@ -202,9 +211,7 @@ function ProductForm({ product, onSaved, onDeleted }: { product: Product | null;
           <input className="input" value={v.capacity} onChange={(e) => set("capacity", e.target.value)} placeholder="20 mL" />
         </Field>
       </div>
-      <Field label="Sabores" error={errors.flavors} hint="Separe por vírgula">
-        <textarea className="input min-h-20" value={v.flavors} onChange={(e) => set("flavors", e.target.value)} placeholder="Grape Ice, Watermelon Ice, Menthol" />
-      </Field>
+      <FlavorsField flavors={flavors} onChange={setFlavors} errors={errors} />
       <Field label="Descrição" error={errors.description}>
         <textarea className="input min-h-24" value={v.description} onChange={(e) => set("description", e.target.value)} />
       </Field>
@@ -253,5 +260,56 @@ function ProductForm({ product, onSaved, onDeleted }: { product: Product | null;
         </div>
       )}
     </form>
+  );
+}
+
+// Um sabor por linha com a quantidade em estoque; o total do produto é a soma.
+function FlavorsField({ flavors, onChange, errors }: { flavors: FlavorRow[]; onChange: (f: FlavorRow[]) => void; errors: Record<string, string> }) {
+  const update = (i: number, patch: Partial<FlavorRow>) => onChange(flavors.map((f, j) => (j === i ? { ...f, ...patch } : f)));
+  const total = flavors.reduce((s, f) => s + (Number(f.stock) || 0), 0);
+  const reserved = flavors.reduce((s, f) => s + (f.reserved ?? 0), 0);
+  return (
+    <div>
+      <div className="mb-1.5 flex items-baseline justify-between text-sm font-medium text-muted">
+        <span>Sabores e estoque</span>
+        <span>
+          Total: <span className="font-semibold text-white">{total}</span>
+          {reserved > 0 && <span className="text-brand"> • {reserved} reservado{reserved > 1 ? "s" : ""} em PIX</span>}
+        </span>
+      </div>
+      <ul className="flex flex-col gap-2">
+        {flavors.map((f, i) => (
+          <li key={i}>
+            <div className="flex items-center gap-2">
+              <input className="input min-w-0 flex-1 py-2!" value={f.name} onChange={(e) => update(i, { name: e.target.value })} placeholder="Sabor (ex.: Grape Ice)" aria-label={`Sabor ${i + 1}`} />
+              <input
+                className="input w-24 py-2! text-center"
+                inputMode="numeric"
+                value={f.stock}
+                onChange={(e) => update(i, { stock: e.target.value.replace(/\D/g, "").slice(0, 5) })}
+                placeholder="Qtd."
+                aria-label={`Quantidade de ${f.name || `sabor ${i + 1}`}`}
+              />
+              <button
+                type="button"
+                onClick={() => onChange(flavors.filter((_, j) => j !== i))}
+                disabled={flavors.length === 1}
+                aria-label="Remover sabor"
+                className="grid size-10 shrink-0 place-items-center rounded-xl text-muted hover:bg-surface-2 hover:text-red-400 disabled:opacity-30"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+            {!!f.reserved && <p className="mt-1 text-xs text-brand">{f.reserved} reservado{f.reserved > 1 ? "s" : ""} em PIX aguardando pagamento</p>}
+            {errors[`flavor${i}`] && <p className="mt-1 text-sm text-red-400">{errors[`flavor${i}`]}</p>}
+          </li>
+        ))}
+      </ul>
+      <button type="button" onClick={() => onChange([...flavors, { name: "", stock: "" }])} className="btn-ghost mt-2 w-full py-2! text-sm">
+        <Plus className="size-4 text-brand" /> Adicionar sabor
+      </button>
+      {errors.flavors && <p className="mt-1 text-sm text-red-400">{errors.flavors}</p>}
+      <p className="mt-1 text-xs text-muted">O PIX gerado reserva as unidades; elas só saem do estoque quando o pagamento é confirmado.</p>
+    </div>
   );
 }

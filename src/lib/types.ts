@@ -76,6 +76,11 @@ export type StoredCustomer = Customer & { passwordHash: string };
 
 export type Admin = { id: string; name: string; email: string; passwordHash: string; createdAt: string };
 
+// stock: unidades em estoque (só sai do estoque quando o pagamento é confirmado).
+// reserved: unidades em PIX aguardando pagamento (só na listagem do admin). Na loja, stock já
+// vem descontado do que está reservado.
+export type Flavor = { name: string; stock: number; reserved?: number };
+
 export type Product = {
   id: string;
   slug: string;
@@ -86,7 +91,7 @@ export type Product = {
   capacity: string;
   description: string;
   image: string;
-  flavors: string[];
+  flavors: Flavor[];
   badge?: string; // selo livre (ex.: "Promo")
   bestseller?: boolean; // selo e filtro "Mais vendidos"
   isNew?: boolean; // selo e filtro "Novidades"
@@ -134,6 +139,7 @@ export type Order = {
   paymentFee?: number; // taxa de processamento do pagamento, já somada ao total
   total: number;
   payment: Payment;
+  stockDebited?: boolean; // itens já descontados do estoque (pagamento confirmado)
   status: OrderStatus;
   history: { status: OrderStatus; at: string }[];
   createdAt: string;

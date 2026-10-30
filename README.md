@@ -31,6 +31,10 @@ no `.env.local` (veja `.env.example`). Para trocar a senha depois do primeiro lo
 - **Dashboard**: faturamento, pedidos de hoje, pedidos para enviar, PIX pendentes, ticket médio, gráfico dos últimos 7 dias, mais vendidos
 - **Pedidos**: busca, filtro por status, detalhe com dados do cliente (WhatsApp/Instagram) e troca de status
 - **Produtos**: cadastrar, editar, ocultar/mostrar na loja, excluir, upload de imagem (JPG/PNG/WEBP até 4 MB)
+- **Estoque por sabor**: cada sabor tem sua quantidade e o total do produto é a soma. Um PIX gerado reserva as unidades
+  (a loja já mostra o saldo sem elas); o estoque só é debitado quando o pagamento é confirmado. PIX expirado ou cancelado
+  libera a reserva sozinho. Cartão aprovado debita na hora. Cancelar um pedido pago antes de sair para entrega devolve os
+  itens ao estoque. Sabor sem saldo aparece como "Esgotado" na loja e o checkout recusa quantidade acima do disponível.
 - **Clientes**: lista com contato, nº de pedidos e total gasto
 
 ## Entrega — `/admin/entrega`
@@ -86,6 +90,7 @@ Sem `DATABASE_URL`, o app usa `data/db.json` (desenvolvimento local).
 | `src/lib/orders.ts` | Regras de pedido e status do pagamento |
 | `src/lib/mercadopago.ts` / `mercadopago-client.ts` | Mercado Pago no servidor (SDK Node) e no navegador (Secure Fields) |
 | `src/lib/payment-fees.ts` | Taxa de processamento e parcelas liberadas por valor |
+| `src/lib/stock.ts` | Estoque por sabor: reserva do PIX pendente, débito e devolução |
 | `src/app/api/*` | Backend (route handlers) |
 
 API: `GET /api/products?q=&brand=`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/me`,

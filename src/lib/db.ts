@@ -36,6 +36,12 @@ function seedProducts(): Product[] {
   return SEED_PRODUCTS.map((p) => ({ ...p, id: randomUUID(), active: true, createdAt: now }));
 }
 
+// Sabores eram só nomes; viram { nome, estoque } com estoque zerado até o admin informar.
+function migrateFlavors(p: Product): Product {
+  const flavors = p.flavors as (Product["flavors"][number] | string)[];
+  return { ...p, flavors: flavors.map((f) => (typeof f === "string" ? { name: f, stock: 0 } : f)) };
+}
+
 // Selos antigos em texto viraram marcações próprias.
 function migrateBadge(p: Product): Product {
   if (p.badge === "Mais vendido") return { ...p, badge: undefined, bestseller: true };
@@ -48,7 +54,7 @@ function normalize(raw: Partial<Schema>): Schema {
     customers: raw.customers ?? [],
     sessions: raw.sessions ?? [],
     orders: raw.orders ?? [],
-    products: (raw.products ?? seedProducts()).map(migrateBadge),
+    products: (raw.products ?? seedProducts()).map(migrateBadge).map(migrateFlavors),
     admins: raw.admins ?? [],
     adminSessions: raw.adminSessions ?? [],
     delivery: raw.delivery ?? { store: null, pricing: { ...UBER_PRESETS.moto.pricing } },
