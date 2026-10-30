@@ -3,20 +3,21 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Bike, Clock, CreditCard, Loader2, Lock, QrCode, ShoppingBag, Smartphone, User, Wallet as WalletIcon } from "lucide-react";
+import { Bike, Clock, CreditCard, Loader2, Lock, Mail, QrCode, ShoppingBag, User } from "lucide-react";
 import { cart, useCart } from "@/lib/cart";
 import { brl, formatPhone, onlyDigits } from "@/lib/format";
 import { formatOpening } from "@/lib/hours";
 import { rememberOrder, saveCheckout, savedCheckout, type SavedCheckout } from "@/lib/my-orders";
+import { maxInstallmentsFor, paymentFee } from "@/lib/payment-fees";
 import { useSession } from "@/lib/session";
-import { WALLET_LABEL, type Address, type Contact, type DeliveryQuote, type PaymentMethod, type Wallet } from "@/lib/types";
+import { refreshStoreInfo, useStoreInfo } from "@/lib/store-info";
+import { EMAIL_RE } from "@/lib/validation";
+import type { Address, Contact, DeliveryQuote } from "@/lib/types";
 import { AddressFields, EMPTY_ADDRESS, isAddressComplete } from "@/components/AddressFields";
 import { WhatsAppIcon } from "@/components/icons";
-import { CardForm, type CardData } from "./CardForm";
-
-const EMPTY_CARD: CardData = { number: "", name: "", expiry: "", cvv: "", installments: 1 };
+import { CardForm, type CardFormHandle } from "./CardForm";
 
 type QuoteState = { key: string; loading: boolean; quote?: DeliveryQuote; preorder?: { opensAt: string | null }; error?: string };
 
@@ -52,22 +53,18 @@ function useDeliveryQuote(address: Address, subtotal: number, enabled: boolean) 
   return state?.key === key ? state : { key, loading: true };
 }
 
-const EMPTY_CONTACT: Contact = { name: "", phone: "" };
-const isContactComplete = (c: Contact) => c.name.trim().length >= 2 && [10, 11].includes(onlyDigits(c.phone).length);
-
-// Apple Pay no Safari de iPhone/iPad/Mac; Google Pay no resto.
-const detectWallet = (): Wallet => {
-  const ua = navigator.userAgent;
-  return /iPhone|iPad|iPod|Macintosh/.test(ua) && /Safari/.test(ua) && !/Chrome|CriOS|FxiOS|Android/.test(ua) ? "apple_pay" : "google_pay";
-};
+const EMPTY_CONTACT: Contact = { name: "", phone: "", email: "" };
+const isContactComplete = (c: Contact) =>
+  c.name.trim().length >= 2 && [10, 11].includes(onlyDigits(c.phone).length) && EMAIL_RE.test((c.email ?? "").trim());
 
 export default function CheckoutPage() {
   const router = useRouter();
   const { items, total, count } = useCart();
   const { customer } = useSession();
-  const [method, setMethod] = useState<PaymentMethod>("pix");
-  const [card, setCard] = useState<CardData>(EMPTY_CARD);
-  const [wallet, setWallet] = useState<Wallet>("google_pay");
+  const { paymentFees } = useStoreInfo();
+  const [method, setMethod] = useState<"pix" | "card">("pix");
+  const [installmentsDraft, setInstallments] = useState(1);
+  const cardForm = useRef<CardFormHandle>(null);
   const [saved, setSaved] = useState<SavedCheckout | null>(null);
   const [contactDraft, setContact] = useState<Contact | null>(null);
   const [addressDraft, setAddress] = useState<Address | null>(null);
@@ -78,17 +75,20 @@ export default function CheckoutPage() {
   useEffect(() => {
     const t = setTimeout(() => {
       setSaved(savedCheckout());
-      setWallet(detectWallet());
     }, 0);
     return () => clearTimeout(t);
   }, []);
 
-  const contact = contactDraft ?? saved?.contact ?? (customer ? { name: customer.name, phone: customer.phone } : EMPTY_CONTACT);
+  const contact = contactDraft ?? saved?.contact ?? (customer ? { name: customer.name, phone: customer.phone, email: customer.email } : EMPTY_CONTACT);
   const address = addressDraft ?? saved?.address ?? customer?.address ?? EMPTY_ADDRESS;
   const identified = isContactComplete(contact);
   const delivery = useDeliveryQuote(address, total, identified);
   const quote = delivery?.quote;
-  const grandTotal = total + (quote?.fee ?? 0);
+  const orderTotal = total + (quote?.fee ?? 0);
+  // Parcelas e taxa de processamento pela tabela do admin (o servidor confere de novo).
+  const installments = paymentFees ? Math.min(installmentsDraft, maxInstallmentsFor(paymentFees, orderTotal)) : 1;
+  const charge = paymentFees && paymentFee(paymentFees, orderTotal, method, method === "card" ? installments : 1);
+  const grandTotal = charge?.total ?? orderTotal;
 
   if (items.length === 0 && !submitting) {
     return (
@@ -103,6 +103,15 @@ export default function CheckoutPage() {
   async function placeOrder() {
     setSubmitting(true);
     setError(null);
+    let card;
+    if (method === "card") {
+      try {
+        card = await cardForm.current!.tokenize();
+      } catch (e) {
+        setSubmitting(false);
+        return setError((e as Error).message);
+      }
+    }
     const res = await fetch("/api/orders", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -111,12 +120,13 @@ export default function CheckoutPage() {
         contact,
         address,
         method,
-        card: method === "card" ? card : undefined,
-        wallet: method === "wallet" ? wallet : undefined,
+        card,
+        expectedTotal: grandTotal,
       }),
     });
     const data = await res.json();
     if (!res.ok) {
+      if (res.status === 409) refreshStoreInfo();
       setSubmitting(false);
       return setError(data.error ?? "Não foi possível finalizar o pedido");
     }
@@ -154,6 +164,22 @@ export default function CheckoutPage() {
                   <User className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-muted" />
                   <input className="input pl-12!" autoComplete="name" placeholder="Como te chamamos?" value={contact.name} onChange={(e) => setContact({ ...contact, name: e.target.value })} />
                 </span>
+              </label>
+              <label className="sm:col-span-2">
+                <span className="mb-1.5 block text-sm font-medium text-muted">E-mail</span>
+                <span className="relative block">
+                  <Mail className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-muted" />
+                  <input
+                    className="input pl-12!"
+                    type="email"
+                    inputMode="email"
+                    autoComplete="email"
+                    placeholder="voce@email.com"
+                    value={contact.email ?? ""}
+                    onChange={(e) => setContact({ ...contact, email: e.target.value.trim() })}
+                  />
+                </span>
+                <span className="mt-1 block text-xs text-muted">O Mercado Pago envia o comprovante do pagamento para este e-mail.</span>
               </label>
             </div>
             <p className="mt-3 text-xs text-muted">
@@ -221,11 +247,10 @@ export default function CheckoutPage() {
 
           {/* 3. Pagamento */}
           <Step n={3} title="Pagamento" disabled={!quote}>
-            <div className="grid grid-cols-3 gap-1.5 rounded-2xl bg-surface-2 p-1.5">
+            <div className="grid grid-cols-2 gap-1.5 rounded-2xl bg-surface-2 p-1.5">
               {([
                 { id: "pix", label: "PIX", icon: QrCode },
-                { id: "wallet", label: WALLET_LABEL[wallet], icon: wallet === "apple_pay" ? Smartphone : WalletIcon },
-                { id: "card", label: "Cartão", icon: CreditCard },
+                { id: "card", label: "Cartão de crédito", icon: CreditCard },
               ] as const).map(({ id, label, icon: Icon }) => (
                 <button
                   key={id}
@@ -254,20 +279,14 @@ export default function CheckoutPage() {
                     <div>
                       <p className="font-semibold">Pagamento instantâneo</p>
                       <p className="mt-1 text-muted">
-                        Ao finalizar, geramos um QR Code e o código copia e cola. O pagamento é confirmado na hora e o PIX expira em 15 minutos.
+                        Ao finalizar, geramos um QR Code e o código copia e cola. O pagamento é confirmado na hora e o PIX expira em 30 minutos.
                       </p>
                     </div>
                   </div>
-                ) : method === "wallet" ? (
-                  <div className="flex gap-4 rounded-2xl border border-line bg-surface-2 p-4 text-sm">
-                    {wallet === "apple_pay" ? <Smartphone className="size-10 shrink-0" /> : <WalletIcon className="size-10 shrink-0" />}
-                    <div>
-                      <p className="font-semibold">Pague com {WALLET_LABEL[wallet]}</p>
-                      <p className="mt-1 text-muted">Confirme com {wallet === "apple_pay" ? "Face ID ou Touch ID" : "a digital ou o bloqueio de tela"}, sem digitar o cartão.</p>
-                    </div>
-                  </div>
+                ) : paymentFees ? (
+                  <CardForm ref={cardForm} total={orderTotal} fees={paymentFees} installments={installments} onInstallments={setInstallments} />
                 ) : (
-                  <CardForm value={card} onChange={setCard} total={grandTotal} />
+                  <div className="h-96 animate-pulse rounded-2xl bg-surface-2" />
                 )}
               </motion.div>
             </AnimatePresence>
@@ -295,10 +314,16 @@ export default function CheckoutPage() {
               <span>Entrega</span>
               <span>{quote ? (quote.free ? <span className="font-semibold text-leaf">Grátis</span> : brl(quote.fee)) : delivery?.loading ? "Calculando…" : "Informe o endereço"}</span>
             </div>
+            {quote && charge && charge.fee > 0 && (
+              <div className="flex justify-between text-muted"><span>Taxa de processamento ({charge.percent.toLocaleString("pt-BR")}%)</span><span>{brl(charge.fee)}</span></div>
+            )}
             <div className="mt-2 flex items-end justify-between">
               <span className="font-semibold">Total</span>
               <span className="font-display text-2xl text-brand">{brl(grandTotal)}</span>
             </div>
+            {quote && method === "card" && installments > 1 && (
+              <p className="text-right text-xs text-muted">em {installments}x de {brl(Math.round((grandTotal / installments) * 100) / 100)}</p>
+            )}
           </div>
 
           <AnimatePresence>
@@ -316,13 +341,13 @@ export default function CheckoutPage() {
 
           <button
             onClick={placeOrder}
-            disabled={!identified || !quote || submitting}
-            className={method === "wallet" ? "mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-white py-3.5 text-lg font-semibold text-black transition active:scale-[.98] disabled:opacity-40" : "btn-brand mt-5 w-full text-lg"}
+            disabled={!identified || !quote || !paymentFees || submitting}
+            className="btn-brand mt-5 w-full text-lg"
           >
-            {submitting ? <Loader2 className="size-5 animate-spin" /> : method === "wallet" ? null : <Lock className="size-4" />}
-            {method === "wallet" ? `${WALLET_LABEL[wallet]} · ${brl(grandTotal)}` : `${delivery?.preorder ? "Encomendar" : method === "pix" ? "Gerar PIX" : "Pagar"} ${brl(grandTotal)}`}
+            {submitting ? <Loader2 className="size-5 animate-spin" /> : <Lock className="size-4" />}
+            {`${delivery?.preorder ? "Encomendar" : method === "pix" ? "Gerar PIX" : "Pagar"} ${brl(grandTotal)}`}
           </button>
-          <p className="mt-3 text-center text-xs text-muted">Ambiente de demonstração — nenhum valor real é cobrado.</p>
+          <p className="mt-3 text-center text-xs text-muted">Pagamento processado com segurança pelo Mercado Pago.</p>
         </aside>
       </div>
     </div>

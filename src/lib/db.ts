@@ -7,7 +7,8 @@ import { SEED_PRODUCTS } from "./products";
 import { UBER_PRESETS } from "./delivery-pricing";
 import { ALWAYS_OPEN } from "./hours";
 import { DEFAULT_SOCIAL } from "./site";
-import type { Admin, DeliverySettings, Order, Product, StoreSettings, StoredCustomer } from "./types";
+import { DEFAULT_PAYMENT_FEES } from "./payment-fees";
+import type { Admin, DeliverySettings, Order, PaymentFees, Product, StoreSettings, StoredCustomer } from "./types";
 
 // Banco de dados como um documento JSON:
 // - com DATABASE_URL (ex.: Neon na Vercel): uma linha jsonb no Postgres, com lock por transação;
@@ -22,6 +23,7 @@ export type Schema = {
   adminSessions: Session[];
   delivery: DeliverySettings;
   settings: StoreSettings;
+  paymentFees: PaymentFees;
 };
 
 export const DATA_DIR = path.join(process.cwd(), "data");
@@ -51,6 +53,7 @@ function normalize(raw: Partial<Schema>): Schema {
     adminSessions: raw.adminSessions ?? [],
     delivery: raw.delivery ?? { store: null, pricing: { ...UBER_PRESETS.moto.pricing } },
     settings: { ...raw.settings, hours: raw.settings?.hours ?? ALWAYS_OPEN, social: { ...DEFAULT_SOCIAL, ...raw.settings?.social } },
+    paymentFees: raw.paymentFees ?? DEFAULT_PAYMENT_FEES,
   };
 }
 

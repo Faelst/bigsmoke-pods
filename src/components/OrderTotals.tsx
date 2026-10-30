@@ -17,6 +17,9 @@ export function OrderTotals({ order }: { order: Order }) {
         <span>Entrega ({order.delivery.distanceKm.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} km)</span>
         <span>{order.delivery.free ? <span className="font-semibold text-leaf">Grátis</span> : brl(order.delivery.fee)}</span>
       </div>
+      {order.paymentFee !== undefined && (
+        <div className="flex justify-between"><span>Taxa de processamento</span><span>{brl(order.paymentFee)}</span></div>
+      )}
     </div>
   );
 }

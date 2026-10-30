@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { motion } from "motion/react";
-import { Bike, ExternalLink, LayoutDashboard, LogOut, Package, ShoppingCart, Store, Users } from "lucide-react";
+import { Bike, CreditCard, ExternalLink, LayoutDashboard, LogOut, Package, ShoppingCart, Store, Users } from "lucide-react";
 
 const LINKS = [
   { href: "/admin", label: "Dashboard", icon: LayoutDashboard },
@@ -12,6 +12,7 @@ const LINKS = [
   { href: "/admin/produtos", label: "Produtos", icon: Package },
   { href: "/admin/clientes", label: "Clientes", icon: Users },
   { href: "/admin/entrega", label: "Entrega", icon: Bike },
+  { href: "/admin/pagamentos", label: "Pagamentos", icon: CreditCard },
   { href: "/admin/loja", label: "Loja", icon: Store },
 ];
 
@@ -58,7 +59,7 @@ export function AdminNav() {
         <Link href="/" target="_blank" aria-label="Ver loja" className="ml-auto grid size-9 place-items-center rounded-xl text-muted hover:bg-surface-2"><ExternalLink className="size-4" /></Link>
         <button onClick={logout} aria-label="Sair" className="grid size-9 place-items-center rounded-xl text-muted hover:bg-surface-2"><LogOut className="size-4" /></button>
       </header>
-      <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-6 border-t border-line bg-bg/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl lg:hidden">
+      <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-7 border-t border-line bg-bg/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl lg:hidden">
         {LINKS.map(({ href, label, icon: Icon }) => (
           <Link key={href} href={href} className="relative flex flex-col items-center gap-1 py-2.5 text-[11px]">
             {isActive(href) && <motion.span layoutId="admin-tab" className="absolute top-1 h-8 w-12 rounded-full bg-brand/15" />}

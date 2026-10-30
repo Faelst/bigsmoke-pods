@@ -6,7 +6,6 @@ export type OrderStatus =
   | "entregue"
   | "cancelado";
 
-export type PaymentMethod = "pix" | "card" | "wallet";
 export type Wallet = "apple_pay" | "google_pay";
 
 export type Customer = {
@@ -104,13 +103,22 @@ export type OrderItem = {
   image: string;
 };
 
+// mpId/mpStatus: pagamento no Mercado Pago (pedidos de demonstração não têm).
+// "wallet" só existe em pedidos antigos, da fase de demonstração.
+type MpPayment = { mpId?: string; mpStatus?: string; paidAt?: string };
 export type Payment =
-  | { method: "pix"; pixCode: string; expiresAt: string; paidAt?: string }
-  | { method: "card"; brand: string; last4: string; installments: number; paidAt?: string }
-  | { method: "wallet"; wallet: Wallet; paidAt?: string };
+  | ({ method: "pix"; pixCode: string; expiresAt: string; ticketUrl?: string } & MpPayment)
+  | ({ method: "card"; brand: string; last4: string; installments: number } & MpPayment)
+  | ({ method: "wallet"; wallet: Wallet } & MpPayment);
 
-// Quem recebe o pedido (compra sem conta: só nome e WhatsApp).
-export type Contact = { name: string; phone: string };
+// Quem recebe o pedido (compra sem conta: nome, WhatsApp e e-mail do pagador).
+export type Contact = { name: string; phone: string; email?: string };
+
+// A partir de minTotal (total do pedido, sem a taxa) o cartão parcela em até maxInstallments.
+export type InstallmentTier = { minTotal: number; maxInstallments: number };
+
+// Taxa de processamento, em % sobre o total do pedido. cardPercent[0] = 1x, [1] = 2x…
+export type PaymentFees = { pixPercent: number; cardPercent: number[]; tiers: InstallmentTier[] };
 
 export type Order = {
   id: string;
@@ -123,6 +131,7 @@ export type Order = {
   delivery?: DeliveryQuote;
   trackingUrl?: string; // link de acompanhamento da corrida (Uber)
   preorder?: { opensAt: string | null }; // feito com a loja fechada: envio na abertura
+  paymentFee?: number; // taxa de processamento do pagamento, já somada ao total
   total: number;
   payment: Payment;
   status: OrderStatus;

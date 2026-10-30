@@ -3,10 +3,10 @@
 import { useEffect } from "react";
 import { DEFAULT_SOCIAL } from "./site";
 import { createStore, useStore } from "./store";
-import type { DayHours, SocialLinks, StoreStatus } from "./types";
+import type { DayHours, PaymentFees, SocialLinks, StoreStatus } from "./types";
 
-type State = { status: StoreStatus | null; hours: DayHours[] | null; social: SocialLinks };
-const infoStore = createStore<State>({ status: null, hours: null, social: DEFAULT_SOCIAL });
+type State = { status: StoreStatus | null; hours: DayHours[] | null; social: SocialLinks; paymentFees: PaymentFees | null };
+const infoStore = createStore<State>({ status: null, hours: null, social: DEFAULT_SOCIAL, paymentFees: null });
 let fetchedAt = 0;
 
 export function refreshStoreInfo() {
@@ -17,7 +17,7 @@ export function refreshStoreInfo() {
     .catch(() => (fetchedAt = 0));
 }
 
-// Situação da loja e redes sociais; atualiza no máximo a cada minuto.
+// Situação da loja, redes sociais e taxas de pagamento; atualiza no máximo a cada minuto.
 export function useStoreInfo() {
   const state = useStore(infoStore);
   useEffect(() => {
