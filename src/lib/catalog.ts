@@ -1,14 +1,26 @@
 import "server-only";
 import { randomUUID } from "crypto";
 import { query, transaction } from "./db";
-import { slugify } from "./products";
-import type { Product } from "./types";
+import { normalize, slugify } from "./products";
+import { forSale, reservedQty, withReserved } from "./stock";
+import type { Flavor, Product } from "./types";
 
-export const listActiveProducts = () => query((db) => db.products.filter((p) => p.active));
+// Na loja, o estoque de cada sabor já vem sem o que está reservado em PIX pendentes.
+export const listActiveProducts = () =>
+  query((db) => {
+    const reserved = reservedQty(db);
+    return db.products.filter((p) => p.active).map((p) => forSale(p, reserved));
+  });
 export const listAllProducts = () =>
-  query((db) => [...db.products].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+  query((db) => {
+    const reserved = reservedQty(db);
+    return [...db.products].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((p) => withReserved(p, reserved));
+  });
 export const getActiveProduct = (slug: string) =>
-  query((db) => db.products.find((p) => p.slug === slug && p.active) ?? null);
+  query((db) => {
+    const p = db.products.find((x) => x.slug === slug && x.active);
+    return p ? forSale(p, reservedQty(db)) : null;
+  });
 
 export class ProductError extends Error {
   constructor(public errors: Record<string, string>, public status = 422) {
@@ -41,16 +53,29 @@ export function parseProduct(body: unknown, partial = false) {
     if (!(price > 0)) errors.price = "Preço inválido";
     out.price = price;
   }
-  if (!partial || has("flavors")) {
-    const list = Array.isArray(b.flavors) ? b.flavors : String(b.flavors ?? "").split(",");
-    out.flavors = [...new Set(list.map((f) => String(f).trim()).filter(Boolean))].slice(0, 30);
-    if (out.flavors.length === 0) errors.flavors = "Informe ao menos um sabor";
-  }
+  if (!partial || has("flavors")) out.flavors = parseFlavors(b.flavors, errors);
   for (const k of ["bestseller", "isNew"] as const) if (!partial || has(k)) out[k] = b[k] === true;
   if (!partial || has("active")) out.active = b.active === undefined ? true : Boolean(b.active);
   if (out.image && !/^\/(products|api\/uploads)\//.test(out.image)) errors.image = "Imagem inválida";
   if (Object.keys(errors).length) throw new ProductError(errors);
   return out;
+}
+
+// Sabores com a quantidade em estoque de cada um. Erros por linha: flavor{i}.
+function parseFlavors(raw: unknown, errors: Record<string, string>): Flavor[] {
+  const list = (Array.isArray(raw) ? raw : []).slice(0, 30) as Record<string, unknown>[];
+  const seen = new Set<string>();
+  const flavors = list.map((f, i) => {
+    const name = String(f?.name ?? "").trim().replace(/\s+/g, " ").slice(0, 60);
+    const stock = Number(String(f?.stock ?? "").trim() || 0);
+    if (!name) errors[`flavor${i}`] = "Informe o nome do sabor";
+    else if (seen.has(normalize(name))) errors[`flavor${i}`] = "Sabor repetido";
+    else if (!Number.isInteger(stock) || stock < 0 || stock > 99_999) errors[`flavor${i}`] = "Quantidade inválida";
+    seen.add(normalize(name));
+    return { name, stock: Number.isInteger(stock) && stock > 0 ? stock : 0 };
+  });
+  if (flavors.length === 0) errors.flavors = "Informe ao menos um sabor";
+  return flavors;
 }
 
 function uniqueSlug(products: Product[], name: string, ignoreId?: string) {
@@ -70,7 +95,7 @@ export function createProduct(input: Partial<ProductInput>) {
       createdAt: new Date().toISOString(),
     };
     db.products.push(p);
-    return p;
+    return withReserved(p, reservedQty(db));
   });
 }
 
@@ -80,7 +105,7 @@ export function updateProduct(id: string, input: Partial<ProductInput>) {
     if (!p) throw new ProductError({ id: "Produto não encontrado" }, 404);
     Object.assign(p, input);
     if (input.badge === "") delete p.badge;
-    return p;
+    return withReserved(p, reservedQty(db));
   });
 }
 

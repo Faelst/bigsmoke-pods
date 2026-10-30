@@ -10,6 +10,7 @@ export type CartItem = {
   price: number;
   flavor: string;
   qty: number;
+  max?: number; // saldo do sabor quando foi adicionado (o checkout confere de novo)
 };
 
 const KEY = "bsp_cart";
@@ -33,10 +34,11 @@ let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
 export const cart = {
   add(p: Product, flavor: string, qty = 1) {
+    const max = Math.min(20, p.flavors.find((f) => f.name === flavor)?.stock ?? 20);
     cartStore.set((items) =>
       items.some((i) => same(i, p.slug, flavor))
-        ? items.map((i) => (same(i, p.slug, flavor) ? { ...i, qty: Math.min(i.qty + qty, 20) } : i))
-        : [...items, { slug: p.slug, name: p.name, image: p.image, price: p.price, flavor, qty }],
+        ? items.map((i) => (same(i, p.slug, flavor) ? { ...i, qty: Math.min(i.qty + qty, max), max } : i))
+        : [...items, { slug: p.slug, name: p.name, image: p.image, price: p.price, flavor, qty: Math.min(qty, max), max }],
     );
     clearTimeout(toastTimer);
     uiStore.set((s) => ({ ...s, toast: `${p.name} • ${flavor}`, bump: s.bump + 1 }));
@@ -46,7 +48,7 @@ export const cart = {
     cartStore.set((items) =>
       qty <= 0
         ? items.filter((i) => !same(i, slug, flavor))
-        : items.map((i) => (same(i, slug, flavor) ? { ...i, qty: Math.min(qty, 20) } : i)),
+        : items.map((i) => (same(i, slug, flavor) ? { ...i, qty: Math.min(qty, i.max ?? 20) } : i)),
     );
   },
   clear: () => cartStore.set([]),

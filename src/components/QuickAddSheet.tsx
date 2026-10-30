@@ -6,7 +6,7 @@ import { useState } from "react";
 import { Plus, X } from "lucide-react";
 import { cart } from "@/lib/cart";
 import { brl } from "@/lib/format";
-import type { Product } from "@/lib/products";
+import { firstAvailable, type Product } from "@/lib/products";
 import { FlavorPicker } from "./FlavorPicker";
 
 export function QuickAddSheet({ product, onClose }: { product: Product | null; onClose: () => void }) {
@@ -18,7 +18,8 @@ export function QuickAddSheet({ product, onClose }: { product: Product | null; o
 }
 
 function Sheet({ product, onClose }: { product: Product; onClose: () => void }) {
-  const [flavor, setFlavor] = useState(product.flavors[0]);
+  const [flavor, setFlavor] = useState(firstAvailable(product));
+  const soldOut = !product.flavors.some((f) => f.name === flavor && f.stock > 0);
   return (
     <>
       <motion.div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
@@ -45,13 +46,14 @@ function Sheet({ product, onClose }: { product: Product; onClose: () => void }) 
         <p className="mb-3 mt-5 text-sm font-semibold text-muted">Escolha o sabor</p>
         <FlavorPicker flavors={product.flavors} value={flavor} onChange={setFlavor} />
         <button
-          className="btn-brand mt-6 w-full"
+          className="btn-brand mt-6 w-full disabled:opacity-50"
+          disabled={soldOut}
           onClick={() => {
             cart.add(product, flavor);
             onClose();
           }}
         >
-          <Plus className="size-5" /> Adicionar ao carrinho
+          <Plus className="size-5" /> {soldOut ? "Esgotado" : "Adicionar ao carrinho"}
         </button>
       </motion.div>
     </>

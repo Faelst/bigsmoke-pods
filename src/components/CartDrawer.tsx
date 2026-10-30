@@ -101,8 +101,9 @@ export function CartDrawer() {
                                 <span className="w-6 text-center text-sm font-semibold">{i.qty}</span>
                                 <button
                                   onClick={() => cart.setQty(i.slug, i.flavor, i.qty + 1)}
+                                  disabled={i.qty >= (i.max ?? 20)}
                                   aria-label="Aumentar"
-                                  className="grid size-7 place-items-center rounded-lg hover:bg-surface"
+                                  className="grid size-7 place-items-center rounded-lg hover:bg-surface disabled:opacity-30"
                                 >
                                   <Plus className="size-3.5" />
                                 </button>

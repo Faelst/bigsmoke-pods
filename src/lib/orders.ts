@@ -6,6 +6,7 @@ import { brl, onlyDigits } from "./format";
 import { MAX_INSTALLMENTS, maxInstallmentsFor, paymentFee } from "./payment-fees";
 import { createCardOrder, createPixOrder, getMpOrder, mpConfigured, rejectionMessage, undoMpOrder, type CardInput, type MpOrder } from "./mercadopago";
 import { deliveryFee, parseAddress } from "./delivery-pricing";
+import { moveStock, shortage } from "./stock";
 import { DeliveryError, deliveryTiming, quoteDelivery } from "./delivery";
 import { STATUS_FLOW, STATUS_LABEL, type Contact, type Order, type OrderItem, type OrderStatus, type OrderSummary } from "./types";
 
@@ -116,10 +117,23 @@ function priceItems(db: Schema, lines: CartLine[]): OrderItem[] {
   return lines.map((i) => {
     const p = db.products.find((x) => x.slug === i.slug && x.active);
     const qty = Math.floor(Number(i.qty));
-    if (!p || !p.flavors.includes(i.flavor) || !(qty >= 1 && qty <= 20))
+    if (!p || !p.flavors.some((f) => f.name === i.flavor) || !(qty >= 1 && qty <= 20))
       throw new OrderError("Um item do carrinho não está mais disponível. Revise seu carrinho.");
     return { slug: p.slug, name: p.name, flavor: i.flavor, price: p.price, qty, image: p.image };
   });
+}
+
+// Sem saldo para algum item: diz quanto ainda há daquele sabor.
+function checkStock(db: Schema, items: OrderItem[]) {
+  const short = shortage(db, items);
+  if (!short) return;
+  const { item, available } = short;
+  throw new OrderError(
+    available === 0
+      ? `${item.name} (${item.flavor}) esgotou. Remova do carrinho para continuar.`
+      : `Só temos ${available} unidade${available > 1 ? "s" : ""} de ${item.name} (${item.flavor}). Ajuste o carrinho.`,
+    409,
+  );
 }
 
 const sumItems = (items: OrderItem[]) => items.reduce((s, i) => s + i.price * i.qty, 0);
@@ -155,6 +169,7 @@ export async function createOrder(customerId: string | null, input: CreateInput)
   // Preços, frete e taxa de pagamento de agora: é esse valor que vai para o Mercado Pago.
   const draft = await query((db) => {
     const items = priceItems(db, input.items);
+    checkStock(db, items);
     const subtotal = sumItems(items);
     const { surge, preorder } = deliveryTiming(db.delivery, db.settings);
     const delivery = deliveryFee(db.delivery.pricing, quote.distanceKm, quote.durationMin, subtotal, surge);
@@ -194,6 +209,7 @@ export async function createOrder(customerId: string | null, input: CreateInput)
         method: "card", brand: brandLabel(card.paymentMethodId), last4: card.last4,
         installments: card.installments, mpId: mp.id, mpStatus: mp.status, paidAt: at,
       },
+      stockDebited: true,
       status: "pago",
       history: [{ status: "aguardando_pagamento", at }, { status: "pago", at }],
     };
@@ -218,6 +234,10 @@ export async function createOrder(customerId: string | null, input: CreateInput)
       // Guarda o endereço para preencher o próximo checkout.
       const customer = db.customers.find((c) => c.id === customerId);
       if (customer) customer.address = address.data;
+      // Outro cliente pode ter levado o último item enquanto o pagamento era criado:
+      // nesse caso o pagamento é desfeito logo abaixo.
+      checkStock(db, order.items);
+      if (order.stockDebited) moveStock(db, order.items, -1);
       db.orders.push(order);
       return order;
     });
@@ -231,10 +251,23 @@ export async function createOrder(customerId: string | null, input: CreateInput)
   }
 }
 
-function setStatus(order: Order, status: OrderStatus) {
+// Status que ainda permitem devolver os itens ao estoque se o pedido for cancelado.
+const NOT_SHIPPED: OrderStatus[] = ["pago", "em_separacao"];
+
+function setStatus(db: Schema, order: Order, status: OrderStatus) {
   const at = new Date().toISOString();
-  // Qualquer status a partir de "pago" implica pagamento confirmado.
-  if (STATUS_FLOW.indexOf(status) >= STATUS_FLOW.indexOf("pago") && !order.payment.paidAt) order.payment.paidAt = at;
+  // Qualquer status a partir de "pago" implica pagamento confirmado: o estoque é debitado
+  // (o PIX só reservava). Cancelar antes do envio devolve os itens ao estoque.
+  if (STATUS_FLOW.indexOf(status) >= STATUS_FLOW.indexOf("pago")) {
+    if (!order.payment.paidAt) order.payment.paidAt = at;
+    if (!order.stockDebited) {
+      moveStock(db, order.items, -1);
+      order.stockDebited = true;
+    }
+  } else if (status === "cancelado" && order.stockDebited && NOT_SHIPPED.includes(order.status)) {
+    moveStock(db, order.items, 1);
+    order.stockDebited = false;
+  }
   order.status = status;
   order.history.push({ status, at });
 }
@@ -257,11 +290,11 @@ export async function applyMpOrder(mp: MpOrder) {
         return;
       }
       // Também vale para o PIX pago no último segundo, depois de expirar aqui.
-      if (order.status === "aguardando_pagamento" || order.status === "cancelado") setStatus(order, "pago");
+      if (order.status === "aguardando_pagamento" || order.status === "cancelado") setStatus(db, order, "pago");
     } else if (["cancelled", "failed", "expired"].includes(mp.status ?? "")) {
-      if (order.status === "aguardando_pagamento") setStatus(order, "cancelado");
+      if (order.status === "aguardando_pagamento") setStatus(db, order, "cancelado");
     } else if (["refunded", "charged_back"].includes(mp.status ?? "")) {
-      if (order.status !== "cancelado") setStatus(order, "cancelado");
+      if (order.status !== "cancelado") setStatus(db, order, "cancelado");
     }
   });
 }
@@ -325,7 +358,7 @@ export async function adminUpdateOrder(id: string, input: { status?: OrderStatus
     const order = db.orders.find((o) => o.id === id);
     if (!order) throw new OrderError("Pedido não encontrado", 404);
     if (trackingUrl !== null) order.trackingUrl = trackingUrl;
-    if (input.status && order.status !== input.status) setStatus(order, input.status);
+    if (input.status && order.status !== input.status) setStatus(db, order, input.status);
     return withCustomer(db, order);
   });
 }
