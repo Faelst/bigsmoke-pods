@@ -179,8 +179,9 @@ export async function createOrder(customerId: string | null, input: CreateInput)
     const charge = paymentFee(db.paymentFees, base, input.method, card?.installments);
     return { items, subtotal, delivery, preorder, paymentFee: charge.fee, total: charge.total };
   });
-  // Preço, frete ou taxa mudaram desde que o cliente viu o total: não cobra um valor diferente.
-  if (input.expectedTotal !== undefined && Math.abs(Number(input.expectedTotal) - draft.total) > 0.01)
+  // Preço, frete ou taxa mudaram desde que o cliente viu o total: não cobra um valor diferente,
+  // nem por 1 centavo (a margem é só para a imprecisão do ponto flutuante).
+  if (input.expectedTotal !== undefined && Math.abs(Number(input.expectedTotal) - draft.total) > 0.005)
     throw new OrderError(`O total do pedido foi atualizado para ${brl(draft.total)}. Confira o resumo e tente de novo.`, 409);
 
   const now = new Date();

@@ -19,13 +19,17 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 
 // Mesma conta do app: base + km + minutos, nunca abaixo do mínimo; a tarifa
 // dinâmica multiplica a corrida (a taxa adicional da loja não).
+// A conta usa a distância e os minutos já arredondados (os que a cotação guarda e o cliente vê):
+// recalcular o pedido a partir da cotação dá exatamente o frete mostrado no checkout.
 export function deliveryFee(p: DeliveryPricing, distanceKm: number, durationMin: number, subtotal = 0, surge = 1): DeliveryQuote {
+  const km = round2(distanceKm);
+  const min = Math.max(1, Math.round(durationMin));
   const free = p.freeAbove > 0 && subtotal >= p.freeAbove;
-  const ride = Math.max(p.minimum, p.base + p.perKm * distanceKm + p.perMin * durationMin) * surge;
+  const ride = Math.max(p.minimum, p.base + p.perKm * km + p.perMin * min) * surge;
   return {
     fee: free ? 0 : round2(ride + p.extra),
-    distanceKm: round2(distanceKm),
-    durationMin: Math.max(1, Math.round(durationMin)),
+    distanceKm: km,
+    durationMin: min,
     free,
     ...(surge !== 1 && { surge }),
   };
