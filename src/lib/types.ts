@@ -64,7 +64,8 @@ export type DayHours = { open: boolean; start: string; end: string };
 export type SocialLinks = { whatsapp: string; instagram: string; tiktok: string };
 
 // closedUntil: loja fechada manualmente até esse instante (reabre sozinha).
-export type StoreSettings = { hours: DayHours[]; social: SocialLinks; closedUntil?: string | null };
+// teamPhones: WhatsApp da equipe (com 55): recebem o aviso de pedido pago e podem mandar /ras.
+export type StoreSettings = { hours: DayHours[]; social: SocialLinks; closedUntil?: string | null; teamPhones?: string[] };
 
 // Situação da loja agora; opensAt = próxima abertura (null se nunca abre).
 export type StoreStatus = { open: boolean; opensAt: string | null; manual?: boolean };
@@ -151,9 +152,13 @@ export type OrderCoupon = CouponOffer & { id: string; discount: number };
 // No admin: usos confirmados (pagos) e reservados (PIX aguardando pagamento).
 export type AdminCoupon = Coupon & { used: number; reserved: number };
 
+// Entrega por motoboy (padrão; pedidos antigos não têm o campo) ou retirada no local, sem frete.
+export type Fulfillment = "delivery" | "pickup";
+
 export type Order = {
   id: string;
   code: string;
+  fulfillment?: Fulfillment;
   customerId?: string; // só quando comprou logado
   contact?: Contact; // pedidos antigos (antes da compra sem conta) não têm
   items: OrderItem[];

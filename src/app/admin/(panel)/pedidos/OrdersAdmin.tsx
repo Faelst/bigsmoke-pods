@@ -4,7 +4,7 @@ import Image from "next/image";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { AtSign, Bike, ChevronRight, Clock, Link2, Loader2, Mail, Navigation, Search } from "lucide-react";
+import { AtSign, Bike, ChevronRight, Clock, Link2, Loader2, Mail, Navigation, Search, Store } from "lucide-react";
 import { adminFetch, useAdminData } from "@/lib/admin-client";
 import { brl, formatDate, formatPhone, onlyDigits } from "@/lib/format";
 import { normalize } from "@/lib/products";
@@ -96,6 +96,7 @@ export function OrdersAdmin() {
                         <span className="font-semibold">#{o.code}</span>
                         <StatusBadge status={o.status} />
                         {o.preorder && <PreorderBadge />}
+                        {o.fulfillment === "pickup" && <PickupBadge />}
                       </div>
                       <p className="mt-1 truncate text-sm text-muted">
                         {o.customer?.name ?? "—"} • {formatDate(o.createdAt)}
@@ -176,6 +177,13 @@ function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated: (o: A
         <StatusBadge status={order.status} />
         <span className="text-sm text-muted">{formatDate(order.createdAt)}</span>
       </div>
+
+      {order.fulfillment === "pickup" && (
+        <p className="flex items-center gap-2 rounded-2xl border border-leaf/40 bg-leaf/5 p-3 text-sm">
+          <Store className="size-4 shrink-0 text-leaf" />
+          Retirada no local: o cliente foi orientado a chamar a loja no WhatsApp para combinar.
+        </p>
+      )}
 
       {order.preorder && (
         <p className="flex items-center gap-2 rounded-2xl border border-brand/40 bg-brand/5 p-3 text-sm">
@@ -328,6 +336,14 @@ function PreorderBadge() {
   return (
     <span className="inline-flex items-center gap-1 rounded-full bg-brand/15 px-2 py-0.5 text-xs font-semibold text-brand">
       <Clock className="size-3" /> Encomenda
+    </span>
+  );
+}
+
+function PickupBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-leaf/15 px-2 py-0.5 text-xs font-semibold text-leaf">
+      <Store className="size-3" /> Retirada
     </span>
   );
 }

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Bike, Clock, CreditCard, Loader2, Lock, Mail, QrCode, ShoppingBag, Ticket, User, X } from "lucide-react";
+import { Bike, Clock, CreditCard, Loader2, Lock, Mail, QrCode, ShoppingBag, Store, Ticket, User, X } from "lucide-react";
 import { cart, useCart } from "@/lib/cart";
 import { brl, formatPhone, onlyDigits } from "@/lib/format";
 import { formatOpening } from "@/lib/hours";
@@ -15,7 +15,7 @@ import { applyCoupon, couponBase, couponLabel } from "@/lib/coupon-pricing";
 import { useSession } from "@/lib/session";
 import { refreshStoreInfo, useStoreInfo } from "@/lib/store-info";
 import { EMAIL_RE } from "@/lib/validation";
-import type { Address, Contact, CouponOffer, DeliveryQuote } from "@/lib/types";
+import type { Address, Contact, CouponOffer, DeliveryQuote, Fulfillment } from "@/lib/types";
 import { AddressFields, EMPTY_ADDRESS, isAddressComplete } from "@/components/AddressFields";
 import { WhatsAppIcon } from "@/components/icons";
 import { CardForm, type CardFormHandle } from "./CardForm";
@@ -62,7 +62,9 @@ export default function CheckoutPage() {
   const router = useRouter();
   const { items, total, count } = useCart();
   const { customer } = useSession();
-  const { paymentFees } = useStoreInfo();
+  const { paymentFees, status: storeStatus } = useStoreInfo();
+  const [fulfillment, setFulfillment] = useState<Fulfillment>("delivery");
+  const pickup = fulfillment === "pickup";
   const [method, setMethod] = useState<"pix" | "card">("pix");
   const [installmentsDraft, setInstallments] = useState(1);
   const cardForm = useRef<CardFormHandle>(null);
@@ -84,10 +86,13 @@ export default function CheckoutPage() {
   const contact = contactDraft ?? saved?.contact ?? (customer ? { name: customer.name, phone: customer.phone, email: customer.email } : EMPTY_CONTACT);
   const address = addressDraft ?? saved?.address ?? customer?.address ?? EMPTY_ADDRESS;
   const identified = isContactComplete(contact);
-  const delivery = useDeliveryQuote(address, total, identified);
-  // Com cupom de frete grátis, a entrega cotada aparece zerada.
+  const delivery = useDeliveryQuote(address, total, identified && !pickup);
+  // Com cupom de frete grátis, a entrega cotada aparece zerada. Retirada não tem frete.
   const applied = applyCoupon(coupon, total, delivery?.quote ?? { fee: 0, distanceKm: 0, durationMin: 0, free: false });
-  const quote = delivery?.quote && applied.delivery;
+  const quote = pickup ? undefined : delivery?.quote && applied.delivery;
+  // Pronto para pagar: com o frete calculado, ou retirada (só precisa dos dados).
+  const ready = pickup ? identified : !!quote;
+  const pickupCouponError = pickup && coupon?.kind === "free_shipping" ? "Cupom de frete grátis não vale para retirada no local (ela já é sem frete)." : null;
   // Mesma conta do servidor (lib/orders.ts), para a taxa sair igual nos dois lados.
   const orderTotal = couponBase(total, applied.productDiscount, quote?.fee ?? 0);
   // Parcelas e taxa de processamento pela tabela do admin (o servidor confere de novo).
@@ -123,7 +128,8 @@ export default function CheckoutPage() {
       body: JSON.stringify({
         items: items.map(({ slug, flavor, qty }) => ({ slug, flavor, qty })),
         contact,
-        address,
+        fulfillment,
+        ...(!pickup && { address }),
         method,
         card,
         coupon: coupon?.code,
@@ -195,7 +201,40 @@ export default function CheckoutPage() {
           </Step>
 
           {/* 2. Endereço */}
-          <Step n={2} title="Endereço de entrega" done={!!quote} disabled={!identified}>
+          <Step n={2} title="Entrega ou retirada" done={ready} disabled={!identified}>
+            <div className="mb-4 grid grid-cols-2 gap-1.5 rounded-2xl bg-surface-2 p-1.5">
+              {([
+                { id: "delivery", label: "Entrega", icon: Bike },
+                { id: "pickup", label: "Retirar no local", icon: Store },
+              ] as const).map(({ id, label, icon: Icon }) => (
+                <button
+                  key={id}
+                  onClick={() => setFulfillment(id)}
+                  className={`relative flex items-center justify-center gap-2 rounded-xl py-3 text-sm font-semibold transition ${fulfillment === id ? "text-black" : "text-muted"}`}
+                >
+                  {fulfillment === id && <motion.span layoutId="fulfillment-tab" className="absolute inset-0 rounded-xl bg-brand" />}
+                  <Icon className="relative size-4" />
+                  <span className="relative">{label}</span>
+                </button>
+              ))}
+            </div>
+            {pickup ? (
+              <div className="flex gap-4 rounded-2xl border border-leaf/30 bg-leaf/5 p-4 text-sm">
+                <Store className="size-10 shrink-0 text-leaf" />
+                <div>
+                  <p className="font-semibold">Retirada no local • <span className="text-leaf">sem frete</span></p>
+                  <p className="mt-1 text-muted">
+                    Assim que o pagamento for confirmado, você recebe no WhatsApp o contato da loja para combinar o horário e o local da retirada.
+                  </p>
+                  {storeStatus && !storeStatus.open && (
+                    <p className="mt-2 text-xs text-brand">
+                      A loja está fechada agora{storeStatus.opensAt && ` (abre ${formatOpening(storeStatus.opensAt)})`}: a retirada é combinada para depois da abertura.
+                    </p>
+                  )}
+                </div>
+              </div>
+            ) : (
+            <>
             <p className="-mt-2 mb-3 text-sm text-muted">Digite o CEP: a gente acha a rua, você só completa número e apto.</p>
             <AddressFields value={address} onChange={setAddress} />
             <AnimatePresence mode="wait" initial={false}>
@@ -249,10 +288,12 @@ export default function CheckoutPage() {
                 </motion.div>
               )}
             </AnimatePresence>
+            </>
+            )}
           </Step>
 
           {/* 3. Pagamento */}
-          <Step n={3} title="Pagamento" disabled={!quote}>
+          <Step n={3} title="Pagamento" disabled={!ready}>
             <div className="grid grid-cols-2 gap-1.5 rounded-2xl bg-surface-2 p-1.5">
               {([
                 { id: "pix", label: "PIX", icon: QrCode },
@@ -315,26 +356,27 @@ export default function CheckoutPage() {
             ))}
           </ul>
           <CouponField coupon={coupon} email={contact.email ?? ""} onChange={setCoupon} />
+          {pickupCouponError && <p className="mt-2 text-sm text-red-300">{pickupCouponError}</p>}
           <div className="mt-4 flex flex-col gap-1.5 border-t border-line pt-4 text-sm">
             <div className="flex justify-between text-muted"><span>Subtotal</span><span>{brl(total)}</span></div>
             <div className="flex justify-between text-muted">
-              <span>Entrega</span>
-              <span>{quote ? (quote.free ? <span className="font-semibold text-leaf">Grátis</span> : brl(quote.fee)) : delivery?.loading ? "Calculando…" : "Informe o endereço"}</span>
+              <span>{pickup ? "Retirada no local" : "Entrega"}</span>
+              <span>{pickup ? <span className="font-semibold text-leaf">Grátis</span> : quote ? (quote.free ? <span className="font-semibold text-leaf">Grátis</span> : brl(quote.fee)) : delivery?.loading ? "Calculando…" : "Informe o endereço"}</span>
             </div>
             {coupon && (
               <div className="flex justify-between text-leaf">
                 <span>Cupom {coupon.code}</span>
-                <span>{coupon.kind === "percent" ? `−${brl(applied.productDiscount)}` : "Frete grátis"}</span>
+                <span>{coupon.kind === "percent" ? `−${brl(applied.productDiscount)}` : pickup ? "—" : "Frete grátis"}</span>
               </div>
             )}
-            {quote && charge && charge.fee > 0 && (
+            {ready && charge && charge.fee > 0 && (
               <div className="flex justify-between text-muted"><span>Taxa de processamento ({charge.percent.toLocaleString("pt-BR")}%)</span><span>{brl(charge.fee)}</span></div>
             )}
             <div className="mt-2 flex items-end justify-between">
               <span className="font-semibold">Total</span>
               <span className="font-display text-2xl text-brand">{brl(grandTotal)}</span>
             </div>
-            {quote && method === "card" && installments > 1 && (
+            {ready && method === "card" && installments > 1 && (
               <p className="text-right text-xs text-muted">em {installments}x de {brl(Math.round((grandTotal / installments) * 100) / 100)}</p>
             )}
           </div>
@@ -354,11 +396,11 @@ export default function CheckoutPage() {
 
           <button
             onClick={placeOrder}
-            disabled={!identified || !quote || !paymentFees || submitting}
+            disabled={!identified || !ready || !!pickupCouponError || !paymentFees || submitting}
             className="btn-brand mt-5 w-full text-lg"
           >
             {submitting ? <Loader2 className="size-5 animate-spin" /> : <Lock className="size-4" />}
-            {`${delivery?.preorder ? "Encomendar" : method === "pix" ? "Gerar PIX" : "Pagar"} ${brl(grandTotal)}`}
+            {`${!pickup && delivery?.preorder ? "Encomendar" : method === "pix" ? "Gerar PIX" : "Pagar"} ${brl(grandTotal)}`}
           </button>
           <p className="mt-3 text-center text-xs text-muted">Pagamento processado com segurança pelo Mercado Pago.</p>
         </aside>

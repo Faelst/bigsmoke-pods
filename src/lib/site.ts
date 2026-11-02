@@ -33,3 +33,18 @@ export function parseSocial(body: unknown) {
   if (data.tiktok && !HANDLE_RE.test(data.tiktok)) errors.tiktok = "Perfil inválido";
   return { data, errors, ok: Object.keys(errors).length === 0 };
 }
+
+// WhatsApp da equipe (avisos de pedido e comando /ras): DDD + número, vira 55 + número.
+export function parseTeamPhones(body: unknown) {
+  const list = Array.isArray(body) ? body : [];
+  const errors: Record<string, string> = {};
+  const data: string[] = [];
+  list.slice(0, 20).forEach((raw, i) => {
+    let phone = onlyDigits(String(raw ?? ""));
+    if (!phone) return;
+    if (phone.length === 10 || phone.length === 11) phone = `55${phone}`;
+    if (phone.length < 12 || phone.length > 13) errors[`team${i}`] = "Informe DDD + número";
+    else if (!data.includes(phone)) data.push(phone);
+  });
+  return { data, errors, ok: Object.keys(errors).length === 0 };
+}

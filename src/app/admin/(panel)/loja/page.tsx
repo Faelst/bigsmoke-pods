@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Clock, Copy, Loader2, Moon, Save, Share2, Sun } from "lucide-react";
+import { Check, Clock, Copy, Loader2, MessageCircle, Moon, Plus, Save, Send, Share2, Sun, Webhook, X } from "lucide-react";
 import { adminFetch, useAdminData } from "@/lib/admin-client";
+import { formatPhone } from "@/lib/format";
 import { formatOpening, storeStatus, WEEKDAYS } from "@/lib/hours";
 import type { DayHours, SocialLinks, StoreSettings } from "@/lib/types";
 import { InstagramIcon, TikTokIcon, WhatsAppIcon } from "@/components/icons";
@@ -12,7 +13,7 @@ export default function StoreAdminPage() {
   const { data } = useAdminData<{ settings: StoreSettings }>("/api/admin/settings");
   return (
     <>
-      <PageTitle title="Loja" subtitle="Horário de funcionamento e redes sociais" />
+      <PageTitle title="Loja" subtitle="Horário de funcionamento, redes sociais e avisos no WhatsApp" />
       {data ? <StoreForm initial={data.settings} /> : <div className="card h-96 animate-pulse" />}
     </>
   );
@@ -21,13 +22,15 @@ export default function StoreAdminPage() {
 function StoreForm({ initial }: { initial: StoreSettings }) {
   const [hours, setHours] = useState<DayHours[]>(initial.hours);
   const [social, setSocial] = useState<SocialLinks>(initial.social);
+  // Na tela, sem o 55 (DDD + número), como nos outros campos de telefone.
+  const [team, setTeam] = useState<string[]>((initial.teamPhones ?? []).map((p) => p.replace(/^55/, "")));
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [closedUntil, setClosedUntil] = useState(initial.closedUntil ?? null);
   const [toggling, setToggling] = useState(false);
   const status = storeStatus(hours, new Date(), closedUntil);
-  const payload = JSON.stringify({ hours, social });
+  const payload = JSON.stringify({ hours, social, teamPhones: team });
   const [savedPayload, setSavedPayload] = useState(payload);
   const dirty = payload !== savedPayload;
 
@@ -51,7 +54,9 @@ function StoreForm({ initial }: { initial: StoreSettings }) {
     try {
       const { settings } = await adminFetch<{ settings: StoreSettings }>("/api/admin/settings", { method: "PUT", body: payload });
       setSocial(settings.social);
-      setSavedPayload(JSON.stringify({ hours, social: settings.social }));
+      const savedTeam = (settings.teamPhones ?? []).map((p) => p.replace(/^55/, ""));
+      setTeam(savedTeam);
+      setSavedPayload(JSON.stringify({ hours, social: settings.social, teamPhones: savedTeam }));
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (e) {
@@ -129,6 +134,8 @@ function StoreForm({ initial }: { initial: StoreSettings }) {
         </div>
       </section>
 
+      <WhatsAppSection team={team} onChange={setTeam} errors={errors} dirty={dirty} />
+
       {/* Barra de salvar */}
       <div className="fixed inset-x-0 bottom-16 z-20 border-t border-line bg-bg/90 p-3 backdrop-blur-xl lg:bottom-0 lg:left-60">
         <div className="mx-auto flex max-w-6xl items-center justify-end gap-3">
@@ -150,5 +157,110 @@ function IconInput({ icon, value, onChange, inputMode }: { icon: React.ReactNode
       <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2">{icon}</span>
       <input className="input pl-12!" inputMode={inputMode} value={value} onChange={(e) => onChange(e.target.value)} />
     </span>
+  );
+}
+
+type WaStatus = {
+  configured: boolean;
+  instance: string;
+  secret: boolean;
+  webhook?: { enabled: boolean; url?: string; ours: boolean };
+  error?: string;
+};
+
+// Números da equipe (salvos com o resto da página) e a ligação com a instância da Evolution API.
+function WhatsAppSection({ team, onChange, errors, dirty }: { team: string[]; onChange: (t: string[]) => void; errors: Record<string, string>; dirty: boolean }) {
+  const { data: status, reload } = useAdminData<WaStatus>("/api/admin/whatsapp");
+  const [busy, setBusy] = useState<"webhook" | "test" | null>(null);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const rows = team.length ? team : [""];
+
+  async function run(action: "webhook" | "test") {
+    setBusy(action);
+    setMsg(null);
+    try {
+      const r = await adminFetch<{ sent?: number }>("/api/admin/whatsapp", { method: "POST", body: JSON.stringify({ action }) });
+      setMsg({ ok: true, text: action === "webhook" ? "Webhook conectado: a instância agora manda as mensagens para a loja." : `Teste enviado para ${r.sent} número(s).` });
+      if (action === "webhook") reload();
+    } catch (e) {
+      setMsg({ ok: false, text: (e as Error).message });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <section className="card p-5 lg:col-span-2">
+      <h2 className="mb-1 flex items-center gap-2 font-semibold"><MessageCircle className="size-5 text-brand" /> WhatsApp da equipe</h2>
+      <p className="mb-4 text-sm text-muted">
+        Quando um pagamento é confirmado, estes números recebem o pedido e o endereço (numa mensagem separada, para copiar).
+        Para despachar, respondam <code className="rounded bg-surface-2 px-1.5 py-0.5 text-white">/ras - CÓDIGO - link da corrida</code>: o pedido vai para
+        &quot;Saiu para entrega&quot; e o cliente recebe o link.
+      </p>
+      <div className="grid gap-5 lg:grid-cols-2">
+        <div>
+          <ul className="flex flex-col gap-2">
+            {rows.map((phone, i) => (
+              <li key={i}>
+                <div className="flex items-center gap-2">
+                  <input
+                    className="input min-w-0 flex-1 py-2!"
+                    inputMode="tel"
+                    placeholder="(12) 99999-9999"
+                    aria-label={`WhatsApp ${i + 1}`}
+                    value={formatPhone(phone)}
+                    onChange={(e) => onChange(rows.map((p, j) => (j === i ? e.target.value.replace(/\D/g, "").slice(0, 11) : p)))}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => onChange(rows.filter((_, j) => j !== i))}
+                    aria-label="Remover número"
+                    className="grid size-10 shrink-0 place-items-center rounded-xl text-muted hover:bg-surface-2 hover:text-red-400"
+                  >
+                    <X className="size-4" />
+                  </button>
+                </div>
+                {errors[`team${i}`] && <p className="mt-1 text-sm text-red-400">{errors[`team${i}`]}</p>}
+              </li>
+            ))}
+          </ul>
+          <button type="button" onClick={() => onChange([...rows, ""])} className="btn-ghost mt-2 w-full py-2! text-sm">
+            <Plus className="size-4 text-brand" /> Adicionar número
+          </button>
+          <p className="mt-1 text-xs text-muted">Só estes números podem usar o /ras. Salve a página depois de mudar.</p>
+        </div>
+
+        <div className="flex flex-col gap-3 rounded-2xl bg-surface-2 p-4 text-sm">
+          {!status ? (
+            <div className="h-24 animate-pulse rounded-xl bg-surface" />
+          ) : !status.configured ? (
+            <p className="text-muted">
+              Integração desligada: configure <code>EVOLUTION_API_URL</code> e <code>EVOLUTION_API_KEY</code> no servidor (veja o README).
+            </p>
+          ) : (
+            <>
+              <p>Instância: <span className="font-semibold">{status.instance}</span></p>
+              {status.error ? (
+                <p className="text-red-300">Não foi possível falar com a Evolution API: {status.error}</p>
+              ) : status.webhook?.ours && status.webhook.enabled ? (
+                <p className="text-leaf">Webhook conectado a esta loja: o /ras está funcionando.</p>
+              ) : (
+                <p className="text-brand">Webhook não aponta para esta loja: os avisos saem, mas o /ras ainda não funciona.</p>
+              )}
+              {!status.secret && <p className="text-red-300">Falta WHATSAPP_WEBHOOK_SECRET no servidor para conectar o webhook.</p>}
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={() => run("webhook")} disabled={!!busy} className="btn-ghost py-2.5! text-xs">
+                  {busy === "webhook" ? <Loader2 className="size-4 animate-spin" /> : <Webhook className="size-4 text-brand" />} Conectar webhook
+                </button>
+                <button onClick={() => run("test")} disabled={!!busy || dirty} title={dirty ? "Salve os números primeiro" : undefined} className="btn-ghost py-2.5! text-xs">
+                  {busy === "test" ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4 text-brand" />} Enviar teste
+                </button>
+              </div>
+            </>
+          )}
+          {msg && <p className={msg.ok ? "text-leaf" : "text-red-300"}>{msg.text}</p>}
+        </div>
+      </div>
+    </section>
   );
 }
