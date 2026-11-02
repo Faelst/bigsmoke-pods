@@ -18,12 +18,30 @@ export type MpOrder = OrderResponse;
 const money = (n: number) => n.toFixed(2);
 
 // extras: entrega e taxa de processamento, que também viram itens (a soma dos itens precisa bater com o total).
-type Common = { orderId: string; code: string; total: number; contact: Contact & { email: string }; items: OrderItem[]; extras: { title: string; amount: number }[] };
+// discount: desconto do cupom sobre os produtos.
+type Common = {
+  orderId: string; code: string; total: number; contact: Contact & { email: string }; items: OrderItem[];
+  discount?: number; extras: { title: string; amount: number }[];
+};
 
-function common({ orderId, code, total, contact, items, extras }: Common): CreateOrderRequest {
+// Item não pode ter preço negativo: com cupom, o desconto é repartido entre os produtos
+// (proporcional ao valor de cada linha, em centavos; a sobra do arredondamento fica na última).
+function productLines(items: OrderItem[], discount = 0) {
+  if (!(discount > 0)) return items.map((i) => ({ title: `${i.name} (${i.flavor})`, unit_price: money(i.price), quantity: i.qty, external_code: i.slug }));
+  const cents = items.map((i) => Math.round(i.price * 100) * i.qty);
+  const total = cents.reduce((a, b) => a + b, 0);
+  let left = Math.round(discount * 100);
+  return items.map((i, k) => {
+    const off = k === items.length - 1 ? left : Math.min(left, Math.round((Math.round(discount * 100) * cents[k]) / total));
+    left -= off;
+    return { title: `${i.qty}x ${i.name} (${i.flavor}) com cupom`, unit_price: ((cents[k] - off) / 100).toFixed(2), quantity: 1, external_code: i.slug };
+  });
+}
+
+function common({ orderId, code, total, contact, items, discount, extras }: Common): CreateOrderRequest {
   const [first_name, ...last] = contact.name.split(" ");
   const lines = [
-    ...items.map((i) => ({ title: `${i.name} (${i.flavor})`, unit_price: money(i.price), quantity: i.qty, external_code: i.slug })),
+    ...productLines(items, discount),
     ...extras.filter((e) => e.amount > 0).map((e) => ({ title: e.title, unit_price: money(e.amount), quantity: 1 })),
   ];
   return {

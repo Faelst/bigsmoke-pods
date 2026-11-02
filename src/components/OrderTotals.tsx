@@ -1,6 +1,7 @@
 import { MapPin } from "lucide-react";
 import { brl } from "@/lib/format";
 import { formatAddress } from "@/lib/delivery-pricing";
+import { couponLabel } from "@/lib/coupon-pricing";
 import type { Order } from "@/lib/types";
 
 export function OrderTotals({ order }: { order: Order }) {
@@ -17,6 +18,13 @@ export function OrderTotals({ order }: { order: Order }) {
         <span>Entrega ({order.delivery.distanceKm.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} km)</span>
         <span>{order.delivery.free ? <span className="font-semibold text-leaf">Grátis</span> : brl(order.delivery.fee)}</span>
       </div>
+      {order.coupon && (
+        <div className="flex justify-between text-leaf">
+          <span>Cupom {order.coupon.code} ({couponLabel(order.coupon).toLowerCase()})</span>
+          {/* No frete grátis o valor já aparece como "Grátis" na entrega: aqui só a economia. */}
+          <span>{order.coupon.kind === "percent" ? `−${brl(order.coupon.discount)}` : `economia de ${brl(order.coupon.discount)}`}</span>
+        </div>
+      )}
       {order.paymentFee !== undefined && (
         <div className="flex justify-between"><span>Taxa de processamento</span><span>{brl(order.paymentFee)}</span></div>
       )}

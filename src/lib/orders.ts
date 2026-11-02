@@ -7,6 +7,8 @@ import { MAX_INSTALLMENTS, maxInstallmentsFor, paymentFee } from "./payment-fees
 import { createCardOrder, createPixOrder, getMpOrder, mpConfigured, rejectionMessage, undoMpOrder, type CardInput, type MpOrder } from "./mercadopago";
 import { deliveryFee, parseAddress } from "./delivery-pricing";
 import { moveStock, shortage } from "./stock";
+import { CouponError, toOffer, usableCoupon } from "./coupons";
+import { applyCoupon, couponBase } from "./coupon-pricing";
 import { DeliveryError, deliveryTiming, quoteDelivery } from "./delivery";
 import { STATUS_FLOW, STATUS_LABEL, type Contact, type Order, type OrderItem, type OrderStatus, type OrderSummary } from "./types";
 
@@ -82,6 +84,7 @@ type CreateInput = {
   method: "pix" | "card";
   card?: unknown;
   expectedTotal?: number; // total mostrado no checkout
+  coupon?: string; // código digitado no checkout
 };
 
 // O PIX do Mercado Pago aceita validade a partir de 30 minutos.
@@ -136,6 +139,17 @@ function checkStock(db: Schema, items: OrderItem[]) {
   );
 }
 
+// Cupom inválido, expirado ou esgotado vira erro do pedido (409: o checkout precisa rever o resumo).
+function couponFor(db: Schema, code: string | undefined, email: string) {
+  if (!code) return null;
+  try {
+    return usableCoupon(db, code, email);
+  } catch (e) {
+    if (e instanceof CouponError) throw new OrderError(`${e.message}. Remova o cupom para continuar.`, 409);
+    throw e;
+  }
+}
+
 const sumItems = (items: OrderItem[]) => items.reduce((s, i) => s + i.price * i.qty, 0);
 
 const BRANDS: Record<string, string> = { visa: "Visa", master: "Mastercard", amex: "Amex", elo: "Elo", hipercard: "Hipercard", cabal: "Cabal" };
@@ -155,6 +169,7 @@ export async function createOrder(customerId: string | null, input: CreateInput)
   const contact = parseContact(input.contact);
   if (input.method !== "pix" && input.method !== "card") throw new OrderError("Forma de pagamento inválida");
   const card = input.method === "card" ? parseCard(input.card) : null;
+  const couponCode = typeof input.coupon === "string" && input.coupon.trim() ? input.coupon : undefined;
 
   if (!input.address) throw new OrderError("Informe o endereço de entrega");
   const address = parseAddress(input.address);
@@ -172,12 +187,15 @@ export async function createOrder(customerId: string | null, input: CreateInput)
     checkStock(db, items);
     const subtotal = sumItems(items);
     const { surge, preorder } = deliveryTiming(db.delivery, db.settings);
-    const delivery = deliveryFee(db.delivery.pricing, quote.distanceKm, quote.durationMin, subtotal, surge);
-    const base = Math.round((subtotal + delivery.fee) * 100) / 100;
+    const coupon = couponFor(db, couponCode, contact.email);
+    const applied = applyCoupon(coupon && toOffer(coupon), subtotal, deliveryFee(db.delivery.pricing, quote.distanceKm, quote.durationMin, subtotal, surge));
+    const delivery = applied.delivery;
+    const base = couponBase(subtotal, applied.productDiscount, delivery.fee);
     if (card && card.installments > maxInstallmentsFor(db.paymentFees, base))
       throw new OrderError("Esse número de parcelas não está disponível para o valor do pedido");
     const charge = paymentFee(db.paymentFees, base, input.method, card?.installments);
-    return { items, subtotal, delivery, preorder, paymentFee: charge.fee, total: charge.total };
+    const orderCoupon = coupon && { id: coupon.id, ...toOffer(coupon), discount: applied.discount };
+    return { items, subtotal, delivery, coupon: orderCoupon, productDiscount: applied.productDiscount, preorder, paymentFee: charge.fee, total: charge.total };
   });
   // Preço, frete ou taxa mudaram desde que o cliente viu o total: não cobra um valor diferente,
   // nem por 1 centavo (a margem é só para a imprecisão do ponto flutuante).
@@ -192,12 +210,13 @@ export async function createOrder(customerId: string | null, input: CreateInput)
     { title: "Entrega", amount: draft.delivery.fee },
     { title: "Taxa de processamento", amount: draft.paymentFee },
   ];
-  const charge = { orderId: id, code, total: draft.total, contact, items: draft.items, extras };
+  const charge = { orderId: id, code, total: draft.total, contact, items: draft.items, discount: draft.productDiscount, extras };
 
   let order: Order;
   const base = {
     id, code, ...(customerId && { customerId }), contact, items: draft.items, subtotal: draft.subtotal,
     address: { ...address.data, ...point }, delivery: draft.delivery, ...(draft.preorder && { preorder: draft.preorder }),
+    ...(draft.coupon && { coupon: draft.coupon }),
     ...(draft.paymentFee > 0 && { paymentFee: draft.paymentFee }), total: draft.total, createdAt: at,
   };
   if (card) {
@@ -238,6 +257,8 @@ export async function createOrder(customerId: string | null, input: CreateInput)
       // Outro cliente pode ter levado o último item enquanto o pagamento era criado:
       // nesse caso o pagamento é desfeito logo abaixo.
       checkStock(db, order.items);
+      // Idem para o último uso do cupom.
+      if (order.coupon) couponFor(db, order.coupon.code, contact.email);
       if (order.stockDebited) moveStock(db, order.items, -1);
       db.orders.push(order);
       return order;
