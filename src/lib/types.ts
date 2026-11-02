@@ -18,7 +18,11 @@ export type Customer = {
   createdAt: string;
 };
 
+// Tipo do local de entrega (só no endereço do cliente; o da loja não tem).
+export type AddressKind = "casa" | "apartamento" | "outro";
+
 export type Address = {
+  kind?: AddressKind;
   cep: string;
   street: string;
   number: string;

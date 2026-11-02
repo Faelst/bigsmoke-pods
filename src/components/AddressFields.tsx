@@ -2,22 +2,28 @@
 
 import { useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Loader2, MapPin } from "lucide-react";
-import { formatCep } from "@/lib/delivery-pricing";
+import { Building2, Home, Loader2, MapPin, MapPinned } from "lucide-react";
+import { ADDRESS_KINDS, formatCep } from "@/lib/delivery-pricing";
 import { onlyDigits } from "@/lib/format";
-import type { Address } from "@/lib/types";
+import type { Address, AddressKind } from "@/lib/types";
 
 export const EMPTY_ADDRESS: Address = { cep: "", street: "", number: "", complement: "", district: "", city: "", state: "" };
 
 export const isAddressComplete = (a: Address) =>
   onlyDigits(a.cep).length === 8 && !!a.street.trim() && !!a.number.trim() && !!a.district.trim() && !!a.city.trim() && a.state.length === 2;
 
+const KIND_ICON: Record<AddressKind, typeof Home> = { casa: Home, apartamento: Building2, outro: MapPinned };
+
 // CEP → busca automática da rua/bairro/cidade; cliente completa número e complemento.
-export function AddressFields({ value, onChange, errors = {} }: { value: Address; onChange: (a: Address) => void; errors?: Record<string, string> }) {
+// withKind (entrega do cliente): escolhe casa/apartamento/outro e o complemento vira obrigatório.
+export function AddressFields({
+  value, onChange, errors = {}, withKind = false,
+}: { value: Address; onChange: (a: Address) => void; errors?: Record<string, string>; withKind?: boolean }) {
   const [loading, setLoading] = useState(false);
   const [cepError, setCepError] = useState<string | null>(null);
   const numberRef = useRef<HTMLInputElement>(null);
   const filled = !!value.street || !!cepError;
+  const kind = ADDRESS_KINDS.find((k) => k.id === value.kind);
   const set = (patch: Partial<Address>) => onChange({ ...value, ...patch });
 
   async function changeCep(raw: string) {
@@ -72,8 +78,46 @@ export function AddressFields({ value, onChange, errors = {} }: { value: Address
             className="col-span-6 grid grid-cols-6 gap-3 overflow-hidden p-px"
           >
             <Input className="col-span-6" label="Rua" autoComplete="address-line1" value={value.street} onChange={(v) => set({ street: v })} error={errors.street} />
+            {withKind && (
+              <div className="col-span-6">
+                <span className="mb-1.5 block text-sm font-medium text-muted">Tipo do endereço</span>
+                <div role="radiogroup" aria-label="Tipo do endereço" className="grid grid-cols-3 gap-2">
+                  {ADDRESS_KINDS.map((k) => {
+                    const Icon = KIND_ICON[k.id];
+                    const on = value.kind === k.id;
+                    return (
+                      <button
+                        key={k.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={on}
+                        onClick={() => set({ kind: k.id })}
+                        className={`flex items-center justify-center gap-2 rounded-xl border px-2 py-2.5 text-sm font-medium transition ${
+                          on ? "border-brand bg-brand/10 text-white" : "border-line text-muted hover:text-white"
+                        }`}
+                      >
+                        <Icon className={`size-4 shrink-0 ${on ? "text-brand" : ""}`} /> {k.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {errors.kind && <span className="mt-1 block text-sm text-red-400">{errors.kind}</span>}
+              </div>
+            )}
             <Input className="col-span-2" label="Número" inputRef={numberRef} value={value.number} onChange={(v) => set({ number: v })} error={errors.number} />
-            <Input className="col-span-4" label="Complemento" placeholder="Apto, bloco… (opcional)" autoComplete="address-line2" value={value.complement} onChange={(v) => set({ complement: v })} />
+            {withKind ? (
+              <Input
+                className="col-span-4"
+                label={kind ? `Complemento (${kind.label.toLowerCase()})` : "Complemento"}
+                placeholder={kind?.hint ?? "Escolha casa, apartamento ou outro"}
+                autoComplete="address-line2"
+                value={value.complement}
+                onChange={(v) => set({ complement: v })}
+                error={errors.complement}
+              />
+            ) : (
+              <Input className="col-span-4" label="Complemento" placeholder="Apto, bloco… (opcional)" autoComplete="address-line2" value={value.complement} onChange={(v) => set({ complement: v })} />
+            )}
             <Input className="col-span-6 sm:col-span-3" label="Bairro" value={value.district} onChange={(v) => set({ district: v })} error={errors.district} />
             <Input className="col-span-4 sm:col-span-2" label="Cidade" autoComplete="address-level2" value={value.city} onChange={(v) => set({ city: v })} error={errors.city} />
             <Input className="col-span-2 sm:col-span-1" label="UF" autoComplete="address-level1" value={value.state} onChange={(v) => set({ state: v.toUpperCase().slice(0, 2) })} error={errors.state} />

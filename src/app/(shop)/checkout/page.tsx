@@ -8,6 +8,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { Bike, Clock, CreditCard, Loader2, Lock, Mail, QrCode, ShoppingBag, Store, Ticket, User, X } from "lucide-react";
 import { cart, useCart } from "@/lib/cart";
 import { brl, formatPhone, onlyDigits } from "@/lib/format";
+import { deliveryAddressError } from "@/lib/delivery-pricing";
 import { formatOpening } from "@/lib/hours";
 import { rememberOrder, saveCheckout, savedCheckout, type SavedCheckout } from "@/lib/my-orders";
 import { maxInstallmentsFor, paymentFee } from "@/lib/payment-fees";
@@ -24,7 +25,9 @@ type QuoteState = { key: string; loading: boolean; quote?: DeliveryQuote; preord
 
 // Cota o frete (com debounce) sempre que o endereço completo muda.
 function useDeliveryQuote(address: Address, subtotal: number, enabled: boolean) {
-  const key = enabled && isAddressComplete(address) ? JSON.stringify([address, subtotal]) : "";
+  // Tipo e complemento não mudam a rota: não recotam o frete a cada tecla.
+  const route = { ...address, kind: undefined, complement: "" };
+  const key = enabled && isAddressComplete(address) ? JSON.stringify([route, subtotal]) : "";
   const [state, setState] = useState<QuoteState | null>(null);
   useEffect(() => {
     if (!key) return;
@@ -91,7 +94,8 @@ export default function CheckoutPage() {
   const applied = applyCoupon(coupon, total, delivery?.quote ?? { fee: 0, distanceKm: 0, durationMin: 0, free: false });
   const quote = pickup ? undefined : delivery?.quote && applied.delivery;
   // Pronto para pagar: com o frete calculado, ou retirada (só precisa dos dados).
-  const ready = pickup ? identified : !!quote;
+  const addressError = pickup ? null : deliveryAddressError(address);
+  const ready = pickup ? identified : !!quote && !addressError;
   const pickupCouponError = pickup && coupon?.kind === "free_shipping" ? "Cupom de frete grátis não vale para retirada no local (ela já é sem frete)." : null;
   // Mesma conta do servidor (lib/orders.ts), para a taxa sair igual nos dois lados.
   const orderTotal = couponBase(total, applied.productDiscount, quote?.fee ?? 0);
@@ -235,8 +239,8 @@ export default function CheckoutPage() {
               </div>
             ) : (
             <>
-            <p className="-mt-2 mb-3 text-sm text-muted">Digite o CEP: a gente acha a rua, você só completa número e apto.</p>
-            <AddressFields value={address} onChange={setAddress} />
+            <p className="-mt-2 mb-3 text-sm text-muted">Digite o CEP: a gente acha a rua, você só completa número, tipo e complemento.</p>
+            <AddressFields value={address} onChange={setAddress} withKind />
             <AnimatePresence mode="wait" initial={false}>
               {delivery && (
                 <motion.div
@@ -284,6 +288,9 @@ export default function CheckoutPage() {
                         </p>
                       </div>
                     </div>
+                  )}
+                  {quote && addressError && (
+                    <p className="mt-3 rounded-2xl border border-brand/40 bg-brand/5 p-3 text-sm text-brand">{addressError} para continuar.</p>
                   )}
                 </motion.div>
               )}
