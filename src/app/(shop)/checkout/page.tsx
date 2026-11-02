@@ -5,16 +5,17 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Bike, Clock, CreditCard, Loader2, Lock, Mail, QrCode, ShoppingBag, User } from "lucide-react";
+import { Bike, Clock, CreditCard, Loader2, Lock, Mail, QrCode, ShoppingBag, Ticket, User, X } from "lucide-react";
 import { cart, useCart } from "@/lib/cart";
 import { brl, formatPhone, onlyDigits } from "@/lib/format";
 import { formatOpening } from "@/lib/hours";
 import { rememberOrder, saveCheckout, savedCheckout, type SavedCheckout } from "@/lib/my-orders";
 import { maxInstallmentsFor, paymentFee } from "@/lib/payment-fees";
+import { applyCoupon, couponBase, couponLabel } from "@/lib/coupon-pricing";
 import { useSession } from "@/lib/session";
 import { refreshStoreInfo, useStoreInfo } from "@/lib/store-info";
 import { EMAIL_RE } from "@/lib/validation";
-import type { Address, Contact, DeliveryQuote } from "@/lib/types";
+import type { Address, Contact, CouponOffer, DeliveryQuote } from "@/lib/types";
 import { AddressFields, EMPTY_ADDRESS, isAddressComplete } from "@/components/AddressFields";
 import { WhatsAppIcon } from "@/components/icons";
 import { CardForm, type CardFormHandle } from "./CardForm";
@@ -70,6 +71,7 @@ export default function CheckoutPage() {
   const [addressDraft, setAddress] = useState<Address | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [coupon, setCoupon] = useState<CouponOffer | null>(null);
 
   // Dados do aparelho só existem no navegador: carrega depois de montar.
   useEffect(() => {
@@ -83,9 +85,11 @@ export default function CheckoutPage() {
   const address = addressDraft ?? saved?.address ?? customer?.address ?? EMPTY_ADDRESS;
   const identified = isContactComplete(contact);
   const delivery = useDeliveryQuote(address, total, identified);
-  const quote = delivery?.quote;
-  // Arredondado como no servidor (lib/orders.ts), para a taxa sair igual nos dois lados.
-  const orderTotal = Math.round((total + (quote?.fee ?? 0)) * 100) / 100;
+  // Com cupom de frete grátis, a entrega cotada aparece zerada.
+  const applied = applyCoupon(coupon, total, delivery?.quote ?? { fee: 0, distanceKm: 0, durationMin: 0, free: false });
+  const quote = delivery?.quote && applied.delivery;
+  // Mesma conta do servidor (lib/orders.ts), para a taxa sair igual nos dois lados.
+  const orderTotal = couponBase(total, applied.productDiscount, quote?.fee ?? 0);
   // Parcelas e taxa de processamento pela tabela do admin (o servidor confere de novo).
   const installments = paymentFees ? Math.min(installmentsDraft, maxInstallmentsFor(paymentFees, orderTotal)) : 1;
   const charge = paymentFees && paymentFee(paymentFees, orderTotal, method, method === "card" ? installments : 1);
@@ -122,6 +126,7 @@ export default function CheckoutPage() {
         address,
         method,
         card,
+        coupon: coupon?.code,
         expectedTotal: grandTotal,
       }),
     });
@@ -309,12 +314,19 @@ export default function CheckoutPage() {
               </li>
             ))}
           </ul>
+          <CouponField coupon={coupon} email={contact.email ?? ""} onChange={setCoupon} />
           <div className="mt-4 flex flex-col gap-1.5 border-t border-line pt-4 text-sm">
             <div className="flex justify-between text-muted"><span>Subtotal</span><span>{brl(total)}</span></div>
             <div className="flex justify-between text-muted">
               <span>Entrega</span>
               <span>{quote ? (quote.free ? <span className="font-semibold text-leaf">Grátis</span> : brl(quote.fee)) : delivery?.loading ? "Calculando…" : "Informe o endereço"}</span>
             </div>
+            {coupon && (
+              <div className="flex justify-between text-leaf">
+                <span>Cupom {coupon.code}</span>
+                <span>{coupon.kind === "percent" ? `−${brl(applied.productDiscount)}` : "Frete grátis"}</span>
+              </div>
+            )}
             {quote && charge && charge.fee > 0 && (
               <div className="flex justify-between text-muted"><span>Taxa de processamento ({charge.percent.toLocaleString("pt-BR")}%)</span><span>{brl(charge.fee)}</span></div>
             )}
@@ -366,5 +378,73 @@ function Step({ n, title, done, disabled, children }: { n: number; title: string
       </h2>
       {children}
     </section>
+  );
+}
+
+// Um cupom por pedido: aplicar outro troca o atual. O servidor confere de novo ao criar o pedido.
+function CouponField({ coupon, email, onChange }: { coupon: CouponOffer | null; email: string; onChange: (c: CouponOffer | null) => void }) {
+  const [code, setCode] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function apply(e: React.FormEvent) {
+    e.preventDefault();
+    if (!code.trim()) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/coupons", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, email: EMAIL_RE.test(email.trim()) ? email.trim() : undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) return setError(data.error ?? "Cupom inválido");
+      onChange(data.coupon);
+      setCode("");
+    } catch {
+      setError("Não foi possível conferir o cupom. Tente novamente.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (coupon)
+    return (
+      <div className="mt-4 flex items-center gap-3 rounded-2xl border border-leaf/40 bg-leaf/5 p-3 text-sm">
+        <Ticket className="size-5 shrink-0 text-leaf" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-mono font-semibold">{coupon.code}</p>
+          <p className="text-xs text-muted">{couponLabel(coupon)} aplicado</p>
+        </div>
+        <button type="button" onClick={() => onChange(null)} aria-label="Remover cupom" className="grid size-9 place-items-center rounded-xl text-muted hover:bg-surface-2 hover:text-white">
+          <X className="size-4" />
+        </button>
+      </div>
+    );
+
+  return (
+    <form onSubmit={apply} className="mt-4">
+      <div className="flex gap-2">
+        <span className="relative block min-w-0 flex-1">
+          <Ticket className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-muted" />
+          <input
+            className="input py-2.5! pl-12! font-mono uppercase"
+            placeholder="Cupom de desconto"
+            aria-label="Cupom de desconto"
+            value={code}
+            maxLength={30}
+            onChange={(e) => {
+              setCode(e.target.value.toUpperCase().replace(/\s/g, ""));
+              setError(null);
+            }}
+          />
+        </span>
+        <button disabled={loading || !code.trim()} className="btn-ghost shrink-0 px-4! py-2.5! text-sm">
+          {loading ? <Loader2 className="size-4 animate-spin" /> : "Aplicar"}
+        </button>
+      </div>
+      {error && <p className="mt-1.5 text-sm text-red-300">{error}</p>}
+    </form>
   );
 }

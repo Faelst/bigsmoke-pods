@@ -27,6 +27,9 @@ function local(date: Date) {
 
 export const nowInStore = (date = new Date()) => local(date).time;
 
+// Data de hoje em Brasília (AAAA-MM-DD).
+export const todayInStore = (date = new Date()) => local(date).ymd;
+
 // Próximo início de expediente depois de `date` (null se nenhum dia abre).
 export function nextOpening(hours: DayHours[], date = new Date()) {
   const { weekday, time, ymd } = local(date);

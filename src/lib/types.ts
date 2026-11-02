@@ -125,6 +125,32 @@ export type InstallmentTier = { minTotal: number; maxInstallments: number };
 // Taxa de processamento, em % sobre o total do pedido. cardPercent[0] = 1x, [1] = 2x…
 export type PaymentFees = { pixPercent: number; cardPercent: number[]; tiers: InstallmentTier[] };
 
+// Cupom de desconto. Só um por pedido.
+// validUntil: último dia em que vale (AAAA-MM-DD, horário de Brasília).
+// maxUses / maxPerEmail: 0 = sem limite. Um uso conta enquanto o PIX aguarda pagamento
+// (reserva) e de vez quando o pagamento é confirmado; pedido cancelado ou PIX expirado libera o uso.
+export type CouponKind = "free_shipping" | "percent";
+export type Coupon = {
+  id: string;
+  code: string; // sempre em maiúsculas
+  kind: CouponKind;
+  percent?: number; // só em "percent": desconto sobre os produtos (sem o frete)
+  validUntil: string;
+  maxUses: number;
+  maxPerEmail: number;
+  active: boolean;
+  createdAt: string;
+};
+
+// O que o checkout recebe ao validar um código.
+export type CouponOffer = Pick<Coupon, "code" | "kind" | "percent">;
+
+// Gravado no pedido. discount: quanto o cupom abateu (no frete grátis, o valor da entrega).
+export type OrderCoupon = CouponOffer & { id: string; discount: number };
+
+// No admin: usos confirmados (pagos) e reservados (PIX aguardando pagamento).
+export type AdminCoupon = Coupon & { used: number; reserved: number };
+
 export type Order = {
   id: string;
   code: string;
@@ -136,6 +162,7 @@ export type Order = {
   delivery?: DeliveryQuote;
   trackingUrl?: string; // link de acompanhamento da corrida (Uber)
   preorder?: { opensAt: string | null }; // feito com a loja fechada: envio na abertura
+  coupon?: OrderCoupon; // desconto já abatido do total
   paymentFee?: number; // taxa de processamento do pagamento, já somada ao total
   total: number;
   payment: Payment;
