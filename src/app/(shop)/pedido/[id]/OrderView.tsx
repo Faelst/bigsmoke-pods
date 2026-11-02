@@ -62,7 +62,9 @@ export function OrderView({ id }: { id: string }) {
   const waitingPix = order.payment.method === "pix" && order.status === "aguardando_pagamento";
   const waText = `Olá! Acabei de fazer o pedido #${order.code} no site Big Smoke Pods.\n\n${order.items
     .map((i) => `• ${i.qty}x ${i.name} (${i.flavor})`)
-    .join("\n")}\n\nTotal: ${brl(order.total)}${order.preorder ? "\nÉ uma encomenda (loja estava fechada)." : ""}${order.address ? `\nEntrega: ${formatAddress(order.address)}` : ""}\nPode me avisar quando sair? 🚀`;
+    .join("\n")}\n\nTotal: ${brl(order.total)}${order.preorder ? "\nÉ uma encomenda (loja estava fechada)." : ""}${
+    order.fulfillment === "pickup" ? "\nVou retirar no local: como combinamos a retirada?" : `${order.address ? `\nEntrega: ${formatAddress(order.address)}` : ""}\nPode me avisar quando sair? 🚀`
+  }`;
 
   return (
     <div className="mx-auto max-w-3xl px-4 pt-4">
@@ -96,7 +98,9 @@ export function OrderView({ id }: { id: string }) {
             </motion.span>
             <div>
               <p className="font-semibold">Pagamento confirmado!</p>
-              <p className="text-sm text-muted">Já estamos separando seu pedido.</p>
+              <p className="text-sm text-muted">
+                {order.fulfillment === "pickup" ? "Enviamos no seu WhatsApp o contato para combinar a retirada." : "Já estamos separando seu pedido."}
+              </p>
             </div>
           </motion.div>
         )}
@@ -112,7 +116,7 @@ export function OrderView({ id }: { id: string }) {
           <div>
             <p className="font-semibold">Encomenda</p>
             <p className="mt-0.5 text-muted">
-              A loja estava fechada quando você pediu. Enviamos assim que abrirmos
+              A loja estava fechada quando você pediu. {order.fulfillment === "pickup" ? "A retirada fica para depois que abrirmos" : "Enviamos assim que abrirmos"}
               {order.preorder.opensAt && ` (${formatDate(order.preorder.opensAt)})`} — se der, sai antes.
             </p>
           </div>

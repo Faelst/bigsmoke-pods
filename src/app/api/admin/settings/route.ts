@@ -1,7 +1,7 @@
 import { withAdmin } from "@/lib/admin-auth";
 import { parseHours } from "@/lib/hours";
 import { getStoreSettings, saveStoreSettings, setClosedNow } from "@/lib/settings";
-import { parseSocial } from "@/lib/site";
+import { parseSocial, parseTeamPhones } from "@/lib/site";
 
 export const GET = withAdmin(async () => Response.json({ settings: await getStoreSettings() }));
 
@@ -9,9 +9,10 @@ export const PUT = withAdmin(async (req: Request) => {
   const body = await req.json().catch(() => ({}));
   const hours = parseHours(body.hours);
   const social = parseSocial(body.social);
-  const errors = { ...hours.errors, ...social.errors };
+  const team = parseTeamPhones(body.teamPhones);
+  const errors = { ...hours.errors, ...social.errors, ...team.errors };
   if (Object.keys(errors).length) return Response.json({ errors }, { status: 400 });
-  return Response.json({ settings: await saveStoreSettings({ hours: hours.data, social: social.data }) });
+  return Response.json({ settings: await saveStoreSettings({ hours: hours.data, social: social.data, teamPhones: team.data }) });
 });
 
 // { closed: true } fecha agora até a próxima abertura; { closed: false } reabre.

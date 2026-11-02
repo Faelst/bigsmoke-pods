@@ -67,6 +67,28 @@ Configuração:
 4. Na conta do Mercado Pago, deixe o parcelamento **sem juros para o comprador** (a loja absorve), senão o Mercado Pago
    cobra juros do cliente além da taxa de processamento da loja.
 
+## Retirada no local
+
+No checkout o cliente escolhe **Entrega** ou **Retirar no local**. A retirada não pede endereço e não tem frete
+(cupom de frete grátis não vale nela). Com o pagamento confirmado, o cliente recebe no WhatsApp o link para chamar a loja
+e combinar a retirada; no admin o pedido aparece com o selo "Retirada".
+
+## WhatsApp (Evolution API) — `/admin/loja`
+
+- **Pedido pago** (cartão aprovado ou PIX confirmado): cada número em **Loja → WhatsApp da equipe** recebe o pedido e,
+  numa mensagem separada, só o endereço (para copiar e colar no app da corrida).
+- **Comando `/ras - CÓDIGO - link`**: respondido por um número da equipe, marca o pedido como "Saiu para entrega",
+  grava o link da corrida, avisa o cliente no WhatsApp e confirma para quem mandou (os outros números também ficam sabendo).
+  Mudar para "Saiu para entrega" pelo painel também avisa o cliente.
+- Falha no WhatsApp nunca trava o pedido nem o pagamento: o erro fica só no log.
+
+Configuração:
+
+1. Preencha `EVOLUTION_API_URL`, `EVOLUTION_API_KEY`, `EVOLUTION_INSTANCE` e `WHATSAPP_WEBHOOK_SECRET` (veja `.env.example`).
+2. No admin, em **Loja → WhatsApp da equipe**, cadastre os números, salve e use **Enviar teste**.
+3. No site publicado, clique em **Conectar webhook**: a instância passa a mandar as mensagens recebidas para
+   `/api/webhooks/whatsapp?token=…` (substitui o webhook que a instância tiver). Em localhost os avisos saem, mas o `/ras` não chega.
+
 ## Deploy na Vercel
 
 A Vercel não permite gravar arquivos, então em produção o app usa Postgres:

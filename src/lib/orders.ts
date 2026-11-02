@@ -9,8 +9,10 @@ import { deliveryFee, parseAddress } from "./delivery-pricing";
 import { moveStock, shortage } from "./stock";
 import { CouponError, toOffer, usableCoupon } from "./coupons";
 import { applyCoupon, couponBase } from "./coupon-pricing";
+import { notifyOrderPaid, notifyShipped } from "./notifications";
+import { later } from "./whatsapp";
 import { DeliveryError, deliveryTiming, quoteDelivery } from "./delivery";
-import { STATUS_FLOW, STATUS_LABEL, type Contact, type Order, type OrderItem, type OrderStatus, type OrderSummary } from "./types";
+import { STATUS_FLOW, STATUS_LABEL, type Address, type Contact, type DeliveryQuote, type Fulfillment, type Order, type OrderItem, type OrderStatus, type OrderSummary } from "./types";
 
 export class OrderError extends Error {
   constructor(message: string, public status = 400) {
@@ -85,7 +87,11 @@ type CreateInput = {
   card?: unknown;
   expectedTotal?: number; // total mostrado no checkout
   coupon?: string; // código digitado no checkout
+  fulfillment?: Fulfillment; // padrão: entrega
 };
+
+// Retirada no local: a conta do cupom segue a mesma, com frete zero.
+const PICKUP_QUOTE: DeliveryQuote = { fee: 0, distanceKm: 0, durationMin: 0, free: true };
 
 // O PIX do Mercado Pago aceita validade a partir de 30 minutos.
 const PIX_MINUTES = 30;
@@ -171,15 +177,21 @@ export async function createOrder(customerId: string | null, input: CreateInput)
   const card = input.method === "card" ? parseCard(input.card) : null;
   const couponCode = typeof input.coupon === "string" && input.coupon.trim() ? input.coupon : undefined;
 
-  if (!input.address) throw new OrderError("Informe o endereço de entrega");
-  const address = parseAddress(input.address);
-  if (!address.ok) throw new OrderError(Object.values(address.errors)[0]);
-
-  // Rota calculada antes (chamadas externas são lentas).
-  const estimate = sumItems(await query((db) => priceItems(db, input.items)));
-  const { quote, point } = await quoteDelivery(address.data, estimate).catch((e) => {
-    throw e instanceof DeliveryError ? new OrderError(e.message, e.status) : e;
-  });
+  // Retirada no local: sem endereço nem frete.
+  const pickup = input.fulfillment === "pickup";
+  let address: { data: Address; ok: true } | null = null;
+  let route: Awaited<ReturnType<typeof quoteDelivery>> | null = null;
+  if (!pickup) {
+    if (!input.address) throw new OrderError("Informe o endereço de entrega");
+    const parsed = parseAddress(input.address);
+    if (!parsed.ok) throw new OrderError(Object.values(parsed.errors)[0]);
+    address = { data: parsed.data, ok: true };
+    // Rota calculada antes (chamadas externas são lentas).
+    const estimate = sumItems(await query((db) => priceItems(db, input.items)));
+    route = await quoteDelivery(parsed.data, estimate).catch((e) => {
+      throw e instanceof DeliveryError ? new OrderError(e.message, e.status) : e;
+    });
+  }
 
   // Preços, frete e taxa de pagamento de agora: é esse valor que vai para o Mercado Pago.
   const draft = await query((db) => {
@@ -188,9 +200,12 @@ export async function createOrder(customerId: string | null, input: CreateInput)
     const subtotal = sumItems(items);
     const { surge, preorder } = deliveryTiming(db.delivery, db.settings);
     const coupon = couponFor(db, couponCode, contact.email);
-    const applied = applyCoupon(coupon && toOffer(coupon), subtotal, deliveryFee(db.delivery.pricing, quote.distanceKm, quote.durationMin, subtotal, surge));
-    const delivery = applied.delivery;
-    const base = couponBase(subtotal, applied.productDiscount, delivery.fee);
+    if (pickup && coupon?.kind === "free_shipping")
+      throw new OrderError("Cupom de frete grátis não vale para retirada no local (ela já é sem frete). Remova o cupom para continuar.", 409);
+    const fee = route ? deliveryFee(db.delivery.pricing, route.quote.distanceKm, route.quote.durationMin, subtotal, surge) : PICKUP_QUOTE;
+    const applied = applyCoupon(coupon && toOffer(coupon), subtotal, fee);
+    const delivery = route ? applied.delivery : undefined;
+    const base = couponBase(subtotal, applied.productDiscount, delivery?.fee ?? 0);
     if (card && card.installments > maxInstallmentsFor(db.paymentFees, base))
       throw new OrderError("Esse número de parcelas não está disponível para o valor do pedido");
     const charge = paymentFee(db.paymentFees, base, input.method, card?.installments);
@@ -207,7 +222,7 @@ export async function createOrder(customerId: string | null, input: CreateInput)
   const id = randomUUID();
   const code = `BSP${now.getTime().toString(36).toUpperCase().slice(-6)}`;
   const extras = [
-    { title: "Entrega", amount: draft.delivery.fee },
+    { title: "Entrega", amount: draft.delivery?.fee ?? 0 },
     { title: "Taxa de processamento", amount: draft.paymentFee },
   ];
   const charge = { orderId: id, code, total: draft.total, contact, items: draft.items, discount: draft.productDiscount, extras };
@@ -215,7 +230,8 @@ export async function createOrder(customerId: string | null, input: CreateInput)
   let order: Order;
   const base = {
     id, code, ...(customerId && { customerId }), contact, items: draft.items, subtotal: draft.subtotal,
-    address: { ...address.data, ...point }, delivery: draft.delivery, ...(draft.preorder && { preorder: draft.preorder }),
+    ...(pickup ? { fulfillment: "pickup" as const } : { address: { ...address!.data, ...route!.point }, delivery: draft.delivery }),
+    ...(draft.preorder && { preorder: draft.preorder }),
     ...(draft.coupon && { coupon: draft.coupon }),
     ...(draft.paymentFee > 0 && { paymentFee: draft.paymentFee }), total: draft.total, createdAt: at,
   };
@@ -250,10 +266,10 @@ export async function createOrder(customerId: string | null, input: CreateInput)
   }
 
   try {
-    return await transaction((db) => {
+    const saved = await transaction((db) => {
       // Guarda o endereço para preencher o próximo checkout.
       const customer = db.customers.find((c) => c.id === customerId);
-      if (customer) customer.address = address.data;
+      if (customer && address) customer.address = address.data;
       // Outro cliente pode ter levado o último item enquanto o pagamento era criado:
       // nesse caso o pagamento é desfeito logo abaixo.
       checkStock(db, order.items);
@@ -263,6 +279,9 @@ export async function createOrder(customerId: string | null, input: CreateInput)
       db.orders.push(order);
       return order;
     });
+    // Cartão aprovado na hora: avisa a equipe já (o PIX avisa quando o pagamento cair).
+    if (saved.status === "pago") later(() => notifyOrderPaid(saved));
+    return saved;
   } catch (e) {
     // Cobrado mas sem pedido gravado: devolve o dinheiro (cartão) ou cancela o PIX.
     console.error(`[mercadopago] pedido ${id} não foi gravado; desfazendo pagamento ${order.payment.mpId}`, e);
@@ -302,23 +321,28 @@ export async function applyMpOrder(mp: MpOrder) {
   const changed = (o: Order | undefined) => !!o && o.payment.mpId === mpId && o.payment.mpStatus !== mp.status;
   if (!id || !(await query((db) => changed(db.orders.find((o) => o.id === id))))) return;
 
-  await transaction((db) => {
+  const paid = await transaction((db): Order | null => {
     const order = db.orders.find((o) => o.id === id);
-    if (!order || !changed(order)) return;
+    if (!order || !changed(order)) return null;
     order.payment.mpStatus = mp.status;
     if (mp.status === "processed") {
       if (Math.abs(Number(mp.total_paid_amount ?? 0) - order.total) > 0.01) {
         console.error(`[mercadopago] valor pago (${mp.total_paid_amount}) diferente do pedido ${order.code} (${order.total})`);
-        return;
+        return null;
       }
       // Também vale para o PIX pago no último segundo, depois de expirar aqui.
-      if (order.status === "aguardando_pagamento" || order.status === "cancelado") setStatus(db, order, "pago");
+      if (order.status === "aguardando_pagamento" || order.status === "cancelado") {
+        setStatus(db, order, "pago");
+        return structuredClone(order);
+      }
     } else if (["cancelled", "failed", "expired"].includes(mp.status ?? "")) {
       if (order.status === "aguardando_pagamento") setStatus(db, order, "cancelado");
     } else if (["refunded", "charged_back"].includes(mp.status ?? "")) {
       if (order.status !== "cancelado") setStatus(db, order, "cancelado");
     }
+    return null;
   });
+  if (paid) later(() => notifyOrderPaid(paid));
 }
 
 // Confere no Mercado Pago um PIX ainda pendente (funciona mesmo sem webhook, ex.: em localhost).
@@ -373,16 +397,30 @@ function parseTrackingUrl(raw: unknown) {
   throw new OrderError("Link de acompanhamento inválido (precisa começar com https://)");
 }
 
-export async function adminUpdateOrder(id: string, input: { status?: OrderStatus; trackingUrl?: unknown }) {
+// notify: avisa o cliente no WhatsApp quando o pedido sai para entrega (ou o link da corrida muda).
+// O comando /ras desliga para avisar ele mesmo e responder se deu certo.
+export async function adminUpdateOrder(id: string, input: { status?: OrderStatus; trackingUrl?: unknown }, { notify = true } = {}) {
   if (input.status !== undefined && !(input.status in STATUS_LABEL)) throw new OrderError("Status inválido");
   const trackingUrl = input.trackingUrl === undefined ? null : parseTrackingUrl(input.trackingUrl);
-  return transaction((db) => {
+  const result = await transaction((db) => {
     const order = db.orders.find((o) => o.id === id);
     if (!order) throw new OrderError("Pedido não encontrado", 404);
+    const before = { status: order.status, trackingUrl: order.trackingUrl };
     if (trackingUrl !== null) order.trackingUrl = trackingUrl;
     if (input.status && order.status !== input.status) setStatus(db, order, input.status);
-    return withCustomer(db, order);
+    const shipped =
+      order.status === "saiu_para_entrega" && (before.status !== "saiu_para_entrega" || (!!order.trackingUrl && order.trackingUrl !== before.trackingUrl));
+    return { order: withCustomer(db, order), shipped };
   });
+  if (notify && result.shipped) later(() => notifyShipped(result.order));
+  return result.order;
+}
+
+// Para o comando /ras do WhatsApp (o código aparece no pedido do cliente e no aviso da equipe).
+export function findOrderByCode(code: string) {
+  const c = code.trim().replace(/^#/, "").toUpperCase();
+  const find = (db: Schema) => db.orders.filter((o) => o.code === c);
+  return withExpirations((db) => find(db)[0] ?? null, find);
 }
 
 export function adminStats() {
