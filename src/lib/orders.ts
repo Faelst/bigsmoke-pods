@@ -5,7 +5,7 @@ import { EMAIL_RE, isCpf } from "./validation";
 import { brl, onlyDigits } from "./format";
 import { MAX_INSTALLMENTS, maxInstallmentsFor, paymentFee } from "./payment-fees";
 import { createCardOrder, createPixOrder, getMpOrder, mpConfigured, rejectionMessage, undoMpOrder, type CardInput, type MpOrder } from "./mercadopago";
-import { deliveryFee, parseAddress } from "./delivery-pricing";
+import { deliveryAddressError, deliveryFee, parseAddress } from "./delivery-pricing";
 import { moveStock, shortage } from "./stock";
 import { CouponError, toOffer, usableCoupon } from "./coupons";
 import { applyCoupon, couponBase } from "./coupon-pricing";
@@ -185,6 +185,8 @@ export async function createOrder(customerId: string | null, input: CreateInput)
     if (!input.address) throw new OrderError("Informe o endereço de entrega");
     const parsed = parseAddress(input.address);
     if (!parsed.ok) throw new OrderError(Object.values(parsed.errors)[0]);
+    const kindError = deliveryAddressError(parsed.data);
+    if (kindError) throw new OrderError(kindError);
     address = { data: parsed.data, ok: true };
     // Rota calculada antes (chamadas externas são lentas).
     const estimate = sumItems(await query((db) => priceItems(db, input.items)));
