@@ -50,6 +50,12 @@ function migrateBadge(p: Product): Product {
   return p;
 }
 
+// O limite por cliente era por e-mail; passou a ser pelo número de WhatsApp (mesmo valor).
+function migrateCoupon(c: Coupon): Coupon {
+  const { maxPerEmail, ...rest } = c as Coupon & { maxPerEmail?: number };
+  return { ...rest, maxPerPhone: c.maxPerPhone ?? maxPerEmail ?? 0 };
+}
+
 function normalize(raw: Partial<Schema>): Schema {
   return {
     customers: raw.customers ?? [],
@@ -61,7 +67,7 @@ function normalize(raw: Partial<Schema>): Schema {
     delivery: raw.delivery ?? { store: null, pricing: { ...UBER_PRESETS.moto.pricing } },
     settings: { ...raw.settings, hours: raw.settings?.hours ?? ALWAYS_OPEN, social: { ...DEFAULT_SOCIAL, ...raw.settings?.social } },
     paymentFees: raw.paymentFees ?? DEFAULT_PAYMENT_FEES,
-    coupons: raw.coupons ?? [],
+    coupons: (raw.coupons ?? []).map(migrateCoupon),
   };
 }
 

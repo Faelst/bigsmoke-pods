@@ -362,7 +362,7 @@ export default function CheckoutPage() {
               </li>
             ))}
           </ul>
-          <CouponField coupon={coupon} email={contact.email ?? ""} onChange={setCoupon} />
+          <CouponField coupon={coupon} phone={contact.phone} onChange={setCoupon} />
           {pickupCouponError && <p className="mt-2 text-sm text-red-300">{pickupCouponError}</p>}
           <div className="mt-4 flex flex-col gap-1.5 border-t border-line pt-4 text-sm">
             <div className="flex justify-between text-muted"><span>Subtotal</span><span>{brl(total)}</span></div>
@@ -373,7 +373,7 @@ export default function CheckoutPage() {
             {coupon && (
               <div className="flex justify-between text-leaf">
                 <span>Cupom {coupon.code}</span>
-                <span>{coupon.kind === "percent" ? `−${brl(applied.productDiscount)}` : pickup ? "—" : "Frete grátis"}</span>
+                <span>{coupon.kind !== "free_shipping" ? `−${brl(applied.productDiscount)}` : pickup ? "—" : "Frete grátis"}</span>
               </div>
             )}
             {ready && charge && charge.fee > 0 && (
@@ -431,7 +431,7 @@ function Step({ n, title, done, disabled, children }: { n: number; title: string
 }
 
 // Um cupom por pedido: aplicar outro troca o atual. O servidor confere de novo ao criar o pedido.
-function CouponField({ coupon, email, onChange }: { coupon: CouponOffer | null; email: string; onChange: (c: CouponOffer | null) => void }) {
+function CouponField({ coupon, phone, onChange }: { coupon: CouponOffer | null; phone: string; onChange: (c: CouponOffer | null) => void }) {
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -445,7 +445,7 @@ function CouponField({ coupon, email, onChange }: { coupon: CouponOffer | null; 
       const res = await fetch("/api/coupons", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, email: EMAIL_RE.test(email.trim()) ? email.trim() : undefined }),
+        body: JSON.stringify({ code, phone: [10, 11].includes(onlyDigits(phone).length) ? onlyDigits(phone) : undefined }),
       });
       const data = await res.json();
       if (!res.ok) return setError(data.error ?? "Cupom inválido");

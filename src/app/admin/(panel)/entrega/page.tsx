@@ -9,7 +9,7 @@ import { nowInStore } from "@/lib/hours";
 import { brl } from "@/lib/format";
 import type { Address, DeliveryPricing, DeliverySettings, DeliverySurge, GeoPoint, PreorderSurge } from "@/lib/types";
 import { AddressFields, EMPTY_ADDRESS, isAddressComplete } from "@/components/AddressFields";
-import { Field, PageTitle } from "@/components/admin/ui";
+import { Field, PageTitle, TimeInput } from "@/components/admin/ui";
 
 type PricingForm = Record<keyof DeliveryPricing, string>;
 type SurgeForm = { start: string; end: string; multiplier: string };
@@ -229,10 +229,10 @@ function DeliveryForm({ initial }: { initial: DeliverySettings }) {
                   <div key={i}>
                     <div className="grid grid-cols-[1fr_1fr_1fr_auto] items-end gap-2">
                       <Field label="Das">
-                        <input type="time" className="input px-3!" value={s.start} onChange={(e) => set({ start: e.target.value })} />
+                        <TimeInput className="px-3!" label="Início da faixa" value={s.start} onChange={(v) => set({ start: v })} />
                       </Field>
                       <Field label="Até">
-                        <input type="time" className="input px-3!" value={s.end} onChange={(e) => set({ end: e.target.value })} />
+                        <TimeInput className="px-3!" label="Fim da faixa" value={s.end} onChange={(v) => set({ end: v })} />
                       </Field>
                       <Field label="Multiplicador">
                         <span className="relative block">
@@ -349,7 +349,7 @@ function Simulator({ from, pricing, surges }: { from: GeoPoint | null; pricing: 
       />
       <div className="mt-3">
         <Field label="Horário do pedido" hint={surge !== 1 ? `Tarifa dinâmica ativa: ${multiplierLabel(surge)}` : "Sem tarifa dinâmica neste horário"}>
-          <input type="time" className="input" value={time} onChange={(e) => setTime(e.target.value)} />
+          <TimeInput label="Horário do pedido" value={time} onChange={setTime} />
         </Field>
       </div>
       <button onClick={simulate} disabled={!from || !isAddressComplete(address) || loading} className="btn-ghost mt-4 w-full">

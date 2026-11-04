@@ -4,7 +4,7 @@ import Image from "next/image";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { AtSign, Bike, ChevronRight, Clock, Link2, Loader2, Mail, Navigation, Search, Store } from "lucide-react";
+import { AtSign, Bike, ChevronRight, Clock, ExternalLink, History, Link2, Loader2, Mail, Navigation, RefreshCw, Search, Store } from "lucide-react";
 import { adminFetch, useAdminData } from "@/lib/admin-client";
 import { brl, formatDate, formatPhone, onlyDigits } from "@/lib/format";
 import { normalize } from "@/lib/products";
@@ -126,9 +126,10 @@ function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated: (o: A
   const [saving, setSaving] = useState<OrderStatus | "link" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dispatching, setDispatching] = useState(false);
-  const [link, setLink] = useState(order.trackingUrl ?? "");
+  const [link, setLink] = useState("");
   const c = order.customer;
   const onTheWay = order.status === "saiu_para_entrega" || order.status === "entregue";
+  const previous = order.previousTracking ?? [];
 
   async function update(body: { status?: OrderStatus; trackingUrl?: string }, key: OrderStatus | "link") {
     setSaving(key);
@@ -140,6 +141,7 @@ function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated: (o: A
       });
       onUpdated(updated);
       setDispatching(false);
+      setLink("");
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -150,14 +152,14 @@ function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated: (o: A
   // "Saiu para entrega" pede o link da corrida antes de confirmar.
   const changeStatus = (s: OrderStatus) => (s === "saiu_para_entrega" ? setDispatching(true) : update({ status: s }, s));
 
-  const linkInput = (
+  const linkInput = (placeholder = "Cole o link de compartilhar viagem da Uber") => (
     <label className="relative block">
       <Link2 className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-muted" />
       <input
         className="input pl-12! text-sm"
         type="url"
         inputMode="url"
-        placeholder="Cole o link de compartilhar viagem da Uber"
+        placeholder={placeholder}
         value={link}
         onChange={(e) => setLink(e.target.value)}
       />
@@ -167,7 +169,9 @@ function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated: (o: A
   const waTracking =
     c && order.trackingUrl
       ? `https://api.whatsapp.com/send?phone=55${c.phone}&text=${encodeURIComponent(
-          `Olá ${c.name.split(" ")[0]}! Seu pedido #${order.code} da Big Smoke Pods saiu para entrega 🛵\nAcompanhe pelo app da Uber: ${order.trackingUrl}`,
+          previous.length
+            ? `Olá ${c.name.split(" ")[0]}! A corrida anterior do seu pedido #${order.code} foi cancelada pelo app de entregas e já chamamos outro motoboy 🛵\nSegue o novo link para acompanhar o rastreio do motoboy: ${order.trackingUrl}`
+            : `Olá ${c.name.split(" ")[0]}! Sua entrega do pedido #${order.code} da Big Smoke Pods já está em andamento 🛵\nSegue o link para acompanhar o rastreio do motoboy: ${order.trackingUrl}`,
         )}`
       : null;
 
@@ -222,7 +226,7 @@ function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated: (o: A
               <div className="mt-3 flex flex-col gap-3 rounded-2xl border border-brand/40 bg-brand/5 p-4">
                 <p className="flex items-center gap-2 text-sm font-semibold"><Bike className="size-4 text-brand" /> Link de acompanhamento da Uber</p>
                 <p className="text-xs text-muted">No app da Uber, abra a entrega e toque em compartilhar. O cliente verá o botão para acompanhar.</p>
-                {linkInput}
+                {linkInput()}
                 <div className="grid grid-cols-2 gap-2">
                   <button onClick={() => setDispatching(false)} className="btn-ghost py-2.5! text-xs">Cancelar</button>
                   <button
@@ -244,14 +248,46 @@ function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated: (o: A
       {onTheWay && !dispatching && (
         <section className="rounded-2xl bg-surface-2 p-4">
           <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold"><Bike className="size-4 text-brand" /> Acompanhamento da entrega</h3>
-          {linkInput}
+
+          {order.trackingUrl ? (
+            <a href={order.trackingUrl} target="_blank" rel="noreferrer" className="mb-3 flex items-center gap-2 rounded-xl border border-line bg-surface px-3 py-2.5 text-xs hover:border-brand/50">
+              <Link2 className="size-4 shrink-0 text-brand" />
+              <span className="min-w-0 flex-1 truncate">{order.trackingUrl}</span>
+              <span className="shrink-0 rounded bg-brand/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-brand">Atual</span>
+              <ExternalLink className="size-3.5 shrink-0 text-muted" />
+            </a>
+          ) : (
+            <p className="mb-3 text-xs text-muted">Nenhum link salvo ainda.</p>
+          )}
+
+          {previous.length > 0 && (
+            <details className="mb-3 text-xs text-muted">
+              <summary className="flex cursor-pointer items-center gap-1.5 hover:text-white">
+                <History className="size-3.5" /> {previous.length} link{previous.length > 1 ? "s" : ""} anterior{previous.length > 1 ? "es" : ""} (corrida cancelada)
+              </summary>
+              <ul className="mt-2 flex flex-col gap-1.5">
+                {[...previous].reverse().map((p, i) => (
+                  <li key={i} className="flex items-center gap-2 rounded-lg bg-surface px-3 py-2">
+                    <span className="min-w-0 flex-1 truncate line-through">{p.url}</span>
+                    <span className="shrink-0">trocado {formatDate(p.replacedAt)}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+
+          {order.trackingUrl && (
+            <p className="mb-2 text-xs text-muted">A Uber cancelou a corrida? Cole o link da nova corrida: ele substitui o atual e o cliente recebe o novo link no WhatsApp.</p>
+          )}
+          {linkInput(order.trackingUrl ? "Link da nova corrida" : undefined)}
           <div className="mt-2 grid grid-cols-2 gap-2">
             <button
               onClick={() => update({ trackingUrl: link }, "link")}
-              disabled={!!saving || link.trim() === (order.trackingUrl ?? "")}
+              disabled={!!saving || !link.trim() || link.trim() === (order.trackingUrl ?? "")}
               className="btn-ghost py-2.5! text-xs"
             >
-              {saving === "link" && <Loader2 className="size-3.5 animate-spin" />} Salvar link
+              {saving === "link" ? <Loader2 className="size-3.5 animate-spin" /> : order.trackingUrl && <RefreshCw className="size-3.5" />}
+              {order.trackingUrl ? "Trocar link" : "Salvar link"}
             </button>
             {waTracking ? (
               <a href={waTracking} target="_blank" rel="noreferrer" className="btn-ghost py-2.5! text-xs">

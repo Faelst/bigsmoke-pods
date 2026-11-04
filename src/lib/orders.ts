@@ -146,10 +146,10 @@ function checkStock(db: Schema, items: OrderItem[]) {
 }
 
 // Cupom inválido, expirado ou esgotado vira erro do pedido (409: o checkout precisa rever o resumo).
-function couponFor(db: Schema, code: string | undefined, email: string) {
+function couponFor(db: Schema, code: string | undefined, phone: string) {
   if (!code) return null;
   try {
-    return usableCoupon(db, code, email);
+    return usableCoupon(db, code, phone);
   } catch (e) {
     if (e instanceof CouponError) throw new OrderError(`${e.message}. Remova o cupom para continuar.`, 409);
     throw e;
@@ -201,7 +201,7 @@ export async function createOrder(customerId: string | null, input: CreateInput)
     checkStock(db, items);
     const subtotal = sumItems(items);
     const { surge, preorder } = deliveryTiming(db.delivery, db.settings);
-    const coupon = couponFor(db, couponCode, contact.email);
+    const coupon = couponFor(db, couponCode, contact.phone);
     if (pickup && coupon?.kind === "free_shipping")
       throw new OrderError("Cupom de frete grátis não vale para retirada no local (ela já é sem frete). Remova o cupom para continuar.", 409);
     const fee = route ? deliveryFee(db.delivery.pricing, route.quote.distanceKm, route.quote.durationMin, subtotal, surge) : PICKUP_QUOTE;
@@ -276,7 +276,7 @@ export async function createOrder(customerId: string | null, input: CreateInput)
       // nesse caso o pagamento é desfeito logo abaixo.
       checkStock(db, order.items);
       // Idem para o último uso do cupom.
-      if (order.coupon) couponFor(db, order.coupon.code, contact.email);
+      if (order.coupon) couponFor(db, order.coupon.code, contact.phone);
       if (order.stockDebited) moveStock(db, order.items, -1);
       db.orders.push(order);
       return order;
@@ -408,7 +408,12 @@ export async function adminUpdateOrder(id: string, input: { status?: OrderStatus
     const order = db.orders.find((o) => o.id === id);
     if (!order) throw new OrderError("Pedido não encontrado", 404);
     const before = { status: order.status, trackingUrl: order.trackingUrl };
-    if (trackingUrl !== null) order.trackingUrl = trackingUrl;
+    if (trackingUrl !== null) {
+      // Corrida trocada (a Uber cancelou): o link antigo fica no histórico do pedido.
+      if (order.trackingUrl && trackingUrl && trackingUrl !== order.trackingUrl)
+        order.previousTracking = [...(order.previousTracking ?? []), { url: order.trackingUrl, replacedAt: new Date().toISOString() }];
+      order.trackingUrl = trackingUrl;
+    }
     if (input.status && order.status !== input.status) setStatus(db, order, input.status);
     const shipped =
       order.status === "saiu_para_entrega" && (before.status !== "saiu_para_entrega" || (!!order.trackingUrl && order.trackingUrl !== before.trackingUrl));

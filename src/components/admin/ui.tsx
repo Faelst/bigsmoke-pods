@@ -1,7 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { X } from "lucide-react";
+import { TIME_RE } from "@/lib/hours";
 
 export function PageTitle({ title, subtitle, action }: { title: string; subtitle?: string; action?: React.ReactNode }) {
   return (
@@ -66,5 +68,56 @@ export function Toggle({ checked, onChange, label }: { checked: boolean; onChang
     >
       <motion.span layout transition={{ type: "spring", damping: 25, stiffness: 400 }} className={`absolute top-1 size-5 rounded-full bg-white shadow ${checked ? "right-1" : "left-1"}`} />
     </button>
+  );
+}
+
+const maskTime = (raw: string) => {
+  const d = raw.replace(/\D/g, "").slice(0, 4);
+  return d.length > 2 ? `${d.slice(0, 2)}:${d.slice(2)}` : d;
+};
+
+// Ao sair do campo: "9" → "09:00", "930" → "09:30", "2130" → "21:30".
+const completeTime = (draft: string) => {
+  const d = draft.replace(/\D/g, "");
+  if (d.length === 1 || d.length === 2) return `${d.padStart(2, "0")}:00`;
+  if (d.length === 3) return `0${d[0]}:${d.slice(1)}`;
+  return maskTime(d);
+};
+
+// Horário sempre em 24h (HH:MM, padrão brasileiro). O <input type="time"> segue o idioma
+// do sistema/navegador e aparece com AM/PM em aparelhos em inglês.
+export function TimeInput({
+  value, onChange, className = "", label,
+}: { value: string; onChange: (v: string) => void; className?: string; label?: string }) {
+  const [draft, setDraft] = useState(value);
+  const [synced, setSynced] = useState(value);
+  if (value !== synced) {
+    setSynced(value);
+    setDraft(value);
+  }
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      autoComplete="off"
+      aria-label={label}
+      placeholder="00:00"
+      maxLength={5}
+      className={`input font-mono tabular-nums ${className}`}
+      value={draft}
+      onChange={(e) => {
+        const v = maskTime(e.target.value);
+        setDraft(v);
+        if (TIME_RE.test(v)) onChange(v);
+      }}
+      onBlur={() => {
+        if (TIME_RE.test(draft)) return;
+        const fixed = completeTime(draft);
+        if (TIME_RE.test(fixed)) {
+          setDraft(fixed);
+          onChange(fixed);
+        } else setDraft(value);
+      }}
+    />
   );
 }

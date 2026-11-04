@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Loader2, Pencil, Percent, Plus, Ticket, Trash2, Truck } from "lucide-react";
+import { BadgeDollarSign, Loader2, Pencil, Percent, Plus, Ticket, Trash2, Truck } from "lucide-react";
 import { adminFetch, useAdminData } from "@/lib/admin-client";
 import { couponLabel } from "@/lib/coupon-pricing";
 import type { AdminCoupon, CouponKind } from "@/lib/types";
@@ -47,7 +47,7 @@ export default function CouponsAdminPage() {
         {!data && [0, 1].map((i) => <li key={i} className="card h-24 animate-pulse" />)}
         <AnimatePresence initial={false}>
           {coupons.map((c) => {
-            const Icon = c.kind === "free_shipping" ? Truck : Percent;
+            const Icon = KIND_ICON[c.kind];
             const status = !c.active ? "Desligado" : expired(c) ? "Expirado" : soldOut(c) ? "Esgotado" : null;
             return (
               <motion.li key={c.id} layout initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className={`card flex min-w-0 items-center gap-3 p-3 ${status ? "opacity-60" : ""}`}>
@@ -61,7 +61,7 @@ export default function CouponsAdminPage() {
                   <p className="truncate text-xs text-muted">
                     {c.used}{c.maxUses > 0 ? `/${c.maxUses}` : ""} usos
                     {c.reserved > 0 && <span className="text-brand"> (+{c.reserved} reservado{c.reserved > 1 ? "s" : ""} em PIX)</span>}
-                    {" • "}{c.maxPerEmail > 0 ? `${c.maxPerEmail}x por e-mail` : "sem limite por e-mail"}
+                    {" • "}{c.maxPerPhone > 0 ? `${c.maxPerPhone}x por WhatsApp` : "sem limite por WhatsApp"}
                   </p>
                 </div>
                 <Toggle checked={c.active} onChange={() => toggle(c)} label={c.active ? "Desligar cupom" : "Ligar cupom"} />
@@ -76,7 +76,7 @@ export default function CouponsAdminPage() {
       {data && coupons.length === 0 && (
         <div className="card mt-4 flex flex-col items-center gap-2 p-10 text-center text-muted">
           <Ticket className="size-10 text-line" />
-          Nenhum cupom ainda. Crie um de frete grátis ou de desconto em %.
+          Nenhum cupom ainda. Crie um de frete grátis, de desconto em % ou em R$.
         </div>
       )}
 
@@ -100,9 +100,12 @@ export default function CouponsAdminPage() {
   );
 }
 
-const KINDS: { id: CouponKind; label: string; icon: typeof Truck }[] = [
-  { id: "free_shipping", label: "Frete grátis", icon: Truck },
-  { id: "percent", label: "Desconto em %", icon: Percent },
+const KIND_ICON: Record<CouponKind, typeof Truck> = { free_shipping: Truck, percent: Percent, fixed: BadgeDollarSign };
+
+const KINDS: { id: CouponKind; label: string }[] = [
+  { id: "free_shipping", label: "Frete grátis" },
+  { id: "percent", label: "Desconto em %" },
+  { id: "fixed", label: "Desconto em R$" },
 ];
 
 function CouponForm({ coupon, onSaved, onDeleted }: { coupon: AdminCoupon | null; onSaved: (c: AdminCoupon) => void; onDeleted: (id: string) => void }) {
@@ -110,9 +113,10 @@ function CouponForm({ coupon, onSaved, onDeleted }: { coupon: AdminCoupon | null
     code: coupon?.code ?? "",
     kind: coupon?.kind ?? ("percent" as CouponKind),
     percent: coupon?.percent ? String(coupon.percent) : "10",
+    amount: coupon?.amount ? coupon.amount.toFixed(2).replace(".", ",") : "10,00",
     validUntil: coupon?.validUntil ?? "",
     maxUses: coupon ? String(coupon.maxUses || "") : "",
-    maxPerEmail: coupon ? String(coupon.maxPerEmail || "") : "1",
+    maxPerPhone: coupon ? String(coupon.maxPerPhone || "") : "1",
     active: coupon?.active ?? true,
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -125,8 +129,8 @@ function CouponForm({ coupon, onSaved, onDeleted }: { coupon: AdminCoupon | null
     e.preventDefault();
     setSaving(true);
     try {
-      const { percent, ...rest } = v;
-      const payload = { ...rest, ...(v.kind === "percent" && { percent }) };
+      const { percent, amount, ...rest } = v;
+      const payload = { ...rest, ...(v.kind === "percent" && { percent }), ...(v.kind === "fixed" && { amount }) };
       const { coupon: saved } = await adminFetch<{ coupon: AdminCoupon }>(coupon ? `/api/admin/coupons/${coupon.id}` : "/api/admin/coupons", {
         method: coupon ? "PATCH" : "POST",
         body: JSON.stringify(payload),
@@ -153,25 +157,32 @@ function CouponForm({ coupon, onSaved, onDeleted }: { coupon: AdminCoupon | null
       </Field>
 
       <Field label="Tipo" error={errors.kind}>
-        <div className="grid grid-cols-2 gap-1.5 rounded-2xl bg-surface-2 p-1.5">
-          {KINDS.map(({ id, label, icon: Icon }) => (
+        <div className="grid grid-cols-3 gap-1.5 rounded-2xl bg-surface-2 p-1.5">
+          {KINDS.map(({ id, label }) => {
+            const Icon = KIND_ICON[id];
+            return (
             <button
               key={id}
               type="button"
               onClick={() => set("kind", id)}
-              className={`relative flex items-center justify-center gap-2 rounded-xl py-3 text-sm font-semibold transition ${v.kind === id ? "text-black" : "text-muted"}`}
+              className={`relative flex flex-col items-center justify-center gap-1 rounded-xl px-1 py-2.5 text-xs font-semibold transition sm:flex-row sm:gap-2 sm:text-sm ${v.kind === id ? "text-black" : "text-muted"}`}
             >
               {v.kind === id && <motion.span layoutId="coupon-kind" className="absolute inset-0 rounded-xl bg-brand" />}
               <Icon className="relative size-4" />
-              <span className="relative">{label}</span>
+              <span className="relative text-center leading-tight">{label}</span>
             </button>
-          ))}
+            );
+          })}
         </div>
       </Field>
 
       {v.kind === "percent" ? (
         <Field label="Desconto (%)" error={errors.percent} hint="Vale sobre o valor dos produtos, sem o frete.">
           <input className="input" inputMode="decimal" value={v.percent} onChange={(e) => set("percent", e.target.value.replace(/[^\d.,]/g, ""))} placeholder="10" />
+        </Field>
+      ) : v.kind === "fixed" ? (
+        <Field label="Desconto (R$)" error={errors.amount} hint="Abatido do valor dos produtos, sem o frete. Nunca passa do valor dos produtos.">
+          <input className="input" inputMode="decimal" value={v.amount} onChange={(e) => set("amount", e.target.value.replace(/[^\d.,]/g, ""))} placeholder="10,00" />
         </Field>
       ) : (
         <p className="-mt-2 text-xs text-muted">Zera a entrega. Não libera endereços fora do raio de entrega da loja.</p>
@@ -185,8 +196,8 @@ function CouponForm({ coupon, onSaved, onDeleted }: { coupon: AdminCoupon | null
         <Field label="Limite de usos" error={errors.maxUses} hint="Total de pedidos. Vazio = sem limite.">
           <input className="input" inputMode="numeric" value={v.maxUses} onChange={(e) => set("maxUses", digits(e.target.value))} placeholder="Sem limite" />
         </Field>
-        <Field label="Usos por e-mail" error={errors.maxPerEmail} hint="Por cliente. Vazio = sem limite.">
-          <input className="input" inputMode="numeric" value={v.maxPerEmail} onChange={(e) => set("maxPerEmail", digits(e.target.value))} placeholder="Sem limite" />
+        <Field label="Usos por WhatsApp" error={errors.maxPerPhone} hint="Por número de WhatsApp do pedido. Vazio = sem limite.">
+          <input className="input" inputMode="numeric" value={v.maxPerPhone} onChange={(e) => set("maxPerPhone", digits(e.target.value))} placeholder="Sem limite" />
         </Field>
       </div>
 
