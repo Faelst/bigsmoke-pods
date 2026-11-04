@@ -7,7 +7,7 @@ import { formatPhone } from "@/lib/format";
 import { formatOpening, storeStatus, WEEKDAYS } from "@/lib/hours";
 import type { DayHours, SocialLinks, StoreSettings } from "@/lib/types";
 import { InstagramIcon, TikTokIcon, WhatsAppIcon } from "@/components/icons";
-import { Field, PageTitle, Toggle } from "@/components/admin/ui";
+import { Field, PageTitle, TimeInput, Toggle } from "@/components/admin/ui";
 
 export default function StoreAdminPage() {
   const { data } = useAdminData<{ settings: StoreSettings }>("/api/admin/settings");
@@ -99,9 +99,9 @@ function StoreForm({ initial }: { initial: StoreSettings }) {
                 <span className="w-16 text-sm font-medium capitalize">{WEEKDAYS[i]}</span>
                 {h.open ? (
                   <div className="ml-auto flex items-center gap-2">
-                    <input type="time" aria-label="Abre" className="input w-28 px-3! py-2!" value={h.start} onChange={(e) => setDay(i, { start: e.target.value })} />
+                    <TimeInput label="Abre" className="w-24 px-3! py-2! text-center" value={h.start} onChange={(v) => setDay(i, { start: v })} />
                     <span className="text-sm text-muted">às</span>
-                    <input type="time" aria-label="Fecha" className="input w-28 px-3! py-2!" value={h.end} onChange={(e) => setDay(i, { end: e.target.value })} />
+                    <TimeInput label="Fecha" className="w-24 px-3! py-2! text-center" value={h.end} onChange={(v) => setDay(i, { end: v })} />
                   </div>
                 ) : (
                   <span className="ml-auto text-sm text-muted">Fechado</span>

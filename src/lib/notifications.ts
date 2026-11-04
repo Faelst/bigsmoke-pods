@@ -1,11 +1,11 @@
 import "server-only";
 import { query } from "./db";
 import { brl, formatPhone } from "./format";
-import { formatAddress } from "./delivery-pricing";
+import { addressKindLabel, DROPOFF_LABEL, dropoffsFor, formatAddress } from "./delivery-pricing";
 import { formatOpening } from "./hours";
 import { SITE, whatsappLink } from "./site";
 import { sendText, waNumber, whatsappConfigured } from "./whatsapp";
-import type { Order } from "./types";
+import type { Address, Order } from "./types";
 
 // Mensagens de WhatsApp da loja: aviso de pedido pago para a equipe, e para o cliente
 // o "saiu para entrega" (com o link da corrida) e o "combine a retirada".
@@ -33,10 +33,19 @@ async function context(order: Order) {
   });
 }
 
+// Tipo do endereço e, em condomínio/apartamento, como o cliente quer receber.
+function deliveryLines(a: Address) {
+  const kind = addressKindLabel(a.kind);
+  if (!kind) return [];
+  const dropoff = a.dropoff && dropoffsFor(a.kind).includes(a.dropoff) ? DROPOFF_LABEL[a.dropoff] : null;
+  return [`📍 ${kind}${a.complement ? ` (${a.complement})` : ""}`, ...(dropoff ? [`📦 *${dropoff}*`] : [])];
+}
+
 export function paidMessage(order: Order, name: string, phone: string) {
   const lines = [
     `🟢 *Novo pedido pago* — #${order.code}`,
     isPickup(order) ? "🏪 *Retirada no local*" : "🛵 Entrega por motoboy",
+    ...(!isPickup(order) && order.address ? deliveryLines(order.address) : []),
     ...(order.preorder ? [`⏰ Encomenda (loja fechada)${order.preorder.opensAt ? `: enviar a partir de ${formatOpening(order.preorder.opensAt)}` : ""}`] : []),
     "",
     `👤 ${name}`,
@@ -46,7 +55,7 @@ export function paidMessage(order: Order, name: string, phone: string) {
     "",
     ...(order.subtotal !== undefined ? [`Subtotal: ${brl(order.subtotal)}`] : []),
     ...(order.coupon
-      ? [order.coupon.kind === "percent" ? `Cupom ${order.coupon.code}: −${brl(order.coupon.discount)}` : `Cupom ${order.coupon.code}: frete grátis`]
+      ? [order.coupon.kind !== "free_shipping" ? `Cupom ${order.coupon.code}: −${brl(order.coupon.discount)}` : `Cupom ${order.coupon.code}: frete grátis`]
       : []),
     ...(order.delivery ? [`Entrega: ${order.delivery.free ? "grátis" : brl(order.delivery.fee)}`] : []),
     ...(order.paymentFee ? [`Taxa de processamento: ${brl(order.paymentFee)}`] : []),
@@ -80,13 +89,30 @@ export async function notifyOrderPaid(order: Order) {
   }
 }
 
+// Link trocado depois da saída: a Uber cancelou a corrida e outro motoboy foi chamado.
+const relinked = (order: Order) => !!order.trackingUrl && !!order.previousTracking?.length;
+
 export const shippedMessage = (order: Order) =>
-  [
-    `🛵 Seu pedido *#${order.code}* saiu para entrega!`,
-    ...(order.trackingUrl ? [`Acompanhe a corrida: ${order.trackingUrl}`] : []),
-    "",
-    SITE.name,
-  ].join("\n");
+  (relinked(order)
+    ? [
+        `🔁 Atualização do pedido *#${order.code}*`,
+        "",
+        "A corrida anterior foi cancelada pelo app de entregas e já chamamos outro motoboy. Sua entrega continua em andamento!",
+        "",
+        `Segue o *novo link* para acompanhar o motoboy em tempo real:\n${order.trackingUrl}`,
+        "",
+        "O link anterior não vale mais.",
+      ]
+    : [
+        `🛵 Pedido *#${order.code}*: sua entrega já está em andamento!`,
+        "",
+        ...(order.trackingUrl
+          ? [`Segue o link para acompanhar o rastreio do motoboy em tempo real:\n${order.trackingUrl}`]
+          : ["O motoboy já saiu com o seu pedido."]),
+      ]
+  )
+    .concat(["", `Obrigado pela preferência! ${SITE.name}`])
+    .join("\n");
 
 // Cliente: pedido a caminho, com o link da corrida. Retirada não tem esse aviso.
 export async function notifyShipped(order: Order) {

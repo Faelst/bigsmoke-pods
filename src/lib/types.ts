@@ -19,10 +19,15 @@ export type Customer = {
 };
 
 // Tipo do local de entrega (só no endereço do cliente; o da loja não tem).
-export type AddressKind = "casa" | "apartamento" | "outro";
+export type AddressKind = "casa" | "apartamento" | "condominio" | "outro";
+
+// Como receber, em condomínio e apartamento: deixar com o porteiro, descer até a portaria
+// ou (só condomínio de casas) o motoboy entrar até a casa.
+export type Dropoff = "deixar_portaria" | "receber_portaria" | "receber_casa";
 
 export type Address = {
   kind?: AddressKind;
+  dropoff?: Dropoff;
   cep: string;
   street: string;
   number: string;
@@ -132,23 +137,24 @@ export type PaymentFees = { pixPercent: number; cardPercent: number[]; tiers: In
 
 // Cupom de desconto. Só um por pedido.
 // validUntil: último dia em que vale (AAAA-MM-DD, horário de Brasília).
-// maxUses / maxPerEmail: 0 = sem limite. Um uso conta enquanto o PIX aguarda pagamento
+// maxUses / maxPerPhone: 0 = sem limite (por cliente = pelo número de WhatsApp do pedido). Um uso conta enquanto o PIX aguarda pagamento
 // (reserva) e de vez quando o pagamento é confirmado; pedido cancelado ou PIX expirado libera o uso.
-export type CouponKind = "free_shipping" | "percent";
+export type CouponKind = "free_shipping" | "percent" | "fixed";
 export type Coupon = {
   id: string;
   code: string; // sempre em maiúsculas
   kind: CouponKind;
   percent?: number; // só em "percent": desconto sobre os produtos (sem o frete)
+  amount?: number; // só em "fixed": R$ abatidos dos produtos (no máximo o valor deles)
   validUntil: string;
   maxUses: number;
-  maxPerEmail: number;
+  maxPerPhone: number;
   active: boolean;
   createdAt: string;
 };
 
 // O que o checkout recebe ao validar um código.
-export type CouponOffer = Pick<Coupon, "code" | "kind" | "percent">;
+export type CouponOffer = Pick<Coupon, "code" | "kind" | "percent" | "amount">;
 
 // Gravado no pedido. discount: quanto o cupom abateu (no frete grátis, o valor da entrega).
 export type OrderCoupon = CouponOffer & { id: string; discount: number };
@@ -169,7 +175,9 @@ export type Order = {
   subtotal?: number; // pedidos antigos não têm entrega
   address?: Address & GeoPoint;
   delivery?: DeliveryQuote;
-  trackingUrl?: string; // link de acompanhamento da corrida (Uber)
+  trackingUrl?: string; // link de acompanhamento da corrida (Uber) em uso agora
+  // Links anteriores, do mais antigo ao mais recente (a Uber cancelou e outra corrida foi chamada).
+  previousTracking?: { url: string; replacedAt: string }[];
   preorder?: { opensAt: string | null }; // feito com a loja fechada: envio na abertura
   coupon?: OrderCoupon; // desconto já abatido do total
   paymentFee?: number; // taxa de processamento do pagamento, já somada ao total

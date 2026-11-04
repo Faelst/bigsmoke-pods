@@ -15,7 +15,8 @@ type Incoming = {
   message?: { conversation?: string; extendedTextMessage?: { text?: string } };
 };
 
-const USAGE = "Use: /ras - CÓDIGO - link da corrida\nEx.: /ras - BSP4K2X9 - https://...";
+const USAGE =
+  "Use: /ras - CÓDIGO - link da corrida\nEx.: /ras - BSP4K2X9 - https://...\nA Uber cancelou? Mande o /ras de novo com o novo link: ele substitui o anterior e o cliente é avisado.";
 
 const textOf = (m: Incoming) => (m.message?.conversation ?? m.message?.extendedTextMessage?.text ?? "").trim();
 
@@ -65,6 +66,7 @@ async function runCommand(text: string, member: string, who?: string) {
   if (order.status === "saiu_para_entrega" && order.trackingUrl === cmd.link)
     return `O pedido #${order.code} já estava como saiu para entrega com esse link. Nada mudou.`;
 
+  const relink = order.status === "saiu_para_entrega" && !!order.trackingUrl;
   let updated;
   try {
     updated = await adminUpdateOrder(order.id, { status: "saiu_para_entrega", trackingUrl: cmd.link }, { notify: false });
@@ -76,11 +78,13 @@ async function runCommand(text: string, member: string, who?: string) {
     console.error(`[whatsapp] falha ao avisar o cliente do pedido ${order.code}`, e);
     return false;
   });
-  await notifyTeam(`🛵 Pedido #${order.code} saiu para entrega${who ? ` (por ${who})` : ""}.`, (p) => samePhone(p, member)).catch((e) =>
+  await notifyTeam(`${relink ? `🔁 Pedido #${order.code}: link da corrida trocado` : `🛵 Pedido #${order.code} saiu para entrega`}${who ? ` (por ${who})` : ""}.`, (p) => samePhone(p, member)).catch((e) =>
     console.error("[whatsapp] falha ao avisar a equipe", e),
   );
   return [
-    `✅ Pedido #${order.code} marcado como *saiu para entrega*.`,
-    sent ? "Cliente avisado no WhatsApp com o link." : "⚠️ Não consegui avisar o cliente pelo WhatsApp: envie o link pelo painel.",
+    relink ? `✅ Link da corrida do pedido #${order.code} trocado.` : `✅ Pedido #${order.code} marcado como *saiu para entrega*.`,
+    sent
+      ? relink ? "Cliente avisado no WhatsApp com o novo link." : "Cliente avisado no WhatsApp com o link."
+      : "⚠️ Não consegui avisar o cliente pelo WhatsApp: envie o link pelo painel.",
   ].join("\n");
 }

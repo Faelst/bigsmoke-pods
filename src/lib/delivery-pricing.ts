@@ -1,6 +1,6 @@
 import { onlyDigits } from "./format";
 import { nowInStore, TIME_RE, toMinutes } from "./hours";
-import type { Address, AddressKind, DeliveryPricing, DeliveryQuote, DeliverySurge } from "./types";
+import type { Address, AddressKind, DeliveryPricing, DeliveryQuote, DeliverySurge, Dropoff } from "./types";
 
 // Valores de referência públicos da Uber Flash (podem estar desatualizados e
 // variam por cidade/demanda) — o admin ajusta tudo no painel.
@@ -54,21 +54,40 @@ export const formatCep = (v: string) => {
 export const ADDRESS_KINDS: { id: AddressKind; label: string; hint: string }[] = [
   { id: "casa", label: "Casa", hint: "Ex.: casa 2, fundos, portão azul" },
   { id: "apartamento", label: "Apartamento", hint: "Ex.: apto 42, bloco B" },
-  { id: "outro", label: "Outro", hint: "Ex.: empresa, loja, condomínio + referência" },
+  { id: "condominio", label: "Condomínio", hint: "Ex.: casa 12, quadra B, rua interna" },
+  { id: "outro", label: "Outro", hint: "Ex.: empresa, loja + referência" },
 ];
+
+export const DROPOFF_LABEL: Record<Dropoff, string> = {
+  deixar_portaria: "Deixar na portaria",
+  receber_portaria: "Receber na portaria",
+  receber_casa: "Receber em casa",
+};
+
+// Opções de recebimento de cada tipo (casa e "outro" não têm: é na porta).
+export const DROPOFFS: Partial<Record<AddressKind, Dropoff[]>> = {
+  condominio: ["deixar_portaria", "receber_casa", "receber_portaria"],
+  apartamento: ["deixar_portaria", "receber_portaria"],
+};
+
+export const dropoffsFor = (k?: AddressKind) => (k && DROPOFFS[k]) || [];
 
 export const addressKindLabel = (k?: AddressKind) => ADDRESS_KINDS.find((x) => x.id === k)?.label;
 
 export const formatAddress = (a: Address) => {
   const kind = addressKindLabel(a.kind);
   const extra = a.complement ? (kind ? `${kind}: ${a.complement}` : a.complement) : kind;
-  return `${a.street}, ${a.number}${extra ? ` - ${extra}` : ""} - ${a.district}, ${a.city}/${a.state} - CEP ${formatCep(a.cep)}`;
+  const dropoff = a.dropoff && dropoffsFor(a.kind).includes(a.dropoff) ? ` (${DROPOFF_LABEL[a.dropoff]})` : "";
+  return `${a.street}, ${a.number}${extra ? ` - ${extra}` : ""}${dropoff} - ${a.district}, ${a.city}/${a.state} - CEP ${formatCep(a.cep)}`;
 };
 
-// Endereço de entrega do cliente: tipo (casa/apartamento/outro) e complemento obrigatórios.
-export function deliveryAddressError(a: Pick<Address, "kind" | "complement">) {
-  if (!ADDRESS_KINDS.some((k) => k.id === a.kind)) return "Escolha o tipo do endereço: casa, apartamento ou outro";
+// Endereço de entrega do cliente: tipo, complemento e (condomínio/apartamento) como receber, obrigatórios.
+export function deliveryAddressError(a: Pick<Address, "kind" | "complement" | "dropoff">) {
+  if (!ADDRESS_KINDS.some((k) => k.id === a.kind)) return "Escolha o tipo do endereço: casa, apartamento, condomínio ou outro";
   if (a.complement.trim().length < 2) return "Informe o complemento do endereço";
+  const options = dropoffsFor(a.kind);
+  if (options.length && !(a.dropoff && options.includes(a.dropoff)))
+    return `Escolha como receber: ${options.map((o) => DROPOFF_LABEL[o].toLowerCase()).join(", ").replace(/, ([^,]*)$/, " ou $1")}`;
   return null;
 }
 
@@ -77,8 +96,10 @@ const str = (v: unknown, max: number) => String(v ?? "").trim().slice(0, max);
 export function parseAddress(body: unknown) {
   const b = (body ?? {}) as Record<string, unknown>;
   const kind = ADDRESS_KINDS.find((k) => k.id === b.kind)?.id;
+  const dropoff = dropoffsFor(kind).find((d) => d === b.dropoff);
   const data: Address = {
     ...(kind && { kind }),
+    ...(dropoff && { dropoff }),
     cep: onlyDigits(str(b.cep, 12)),
     street: str(b.street, 120),
     number: str(b.number, 10),

@@ -32,7 +32,7 @@ export function OrderTotals({ order }: { order: Order }) {
         <div className="flex justify-between text-leaf">
           <span>Cupom {order.coupon.code} ({couponLabel(order.coupon).toLowerCase()})</span>
           {/* No frete grátis o valor já aparece como "Grátis" na entrega: aqui só a economia. */}
-          <span>{order.coupon.kind === "percent" ? `−${brl(order.coupon.discount)}` : `economia de ${brl(order.coupon.discount)}`}</span>
+          <span>{order.coupon.kind !== "free_shipping" ? `−${brl(order.coupon.discount)}` : `economia de ${brl(order.coupon.discount)}`}</span>
         </div>
       )}
       {order.paymentFee !== undefined && (

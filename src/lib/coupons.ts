@@ -1,6 +1,7 @@
 import "server-only";
 import { randomUUID } from "crypto";
 import { query, transaction, type Schema } from "./db";
+import { onlyDigits } from "./format";
 import { todayInStore } from "./hours";
 import type { AdminCoupon, Coupon, CouponKind, CouponOffer, Order } from "./types";
 
@@ -12,7 +13,9 @@ export class CouponError extends Error {
 
 export const normalizeCode = (raw: unknown) => String(raw ?? "").trim().toUpperCase().slice(0, 30);
 
-const orderEmail = (db: Schema, o: Order) => o.contact?.email ?? db.customers.find((c) => c.id === o.customerId)?.email ?? "";
+// Cliente = número de WhatsApp do pedido (só dígitos, sem o 55).
+export const normalizePhone = (raw: unknown) => onlyDigits(String(raw ?? "")).replace(/^55(?=\d{10,11}$)/, "");
+const orderPhone = (db: Schema, o: Order) => normalizePhone(o.contact?.phone ?? db.customers.find((c) => c.id === o.customerId)?.phone);
 
 // Como o estoque: PIX no prazo reserva o uso, pedido pago (ou além) usa de vez,
 // cancelado ou PIX expirado não conta.
@@ -22,37 +25,46 @@ function couponUse(o: Order, now: number): "reserved" | "used" | null {
   return o.payment.method === "pix" && new Date(o.payment.expiresAt).getTime() > now ? "reserved" : null;
 }
 
-function usage(db: Schema, couponId: string, email?: string, now = Date.now()) {
-  let used = 0, reserved = 0, byEmail = 0;
+function usage(db: Schema, couponId: string, phone?: string, now = Date.now()) {
+  let used = 0, reserved = 0, byPhone = 0;
   for (const o of db.orders) {
     if (o.coupon?.id !== couponId) continue;
     const s = couponUse(o, now);
     if (!s) continue;
     if (s === "used") used++;
     else reserved++;
-    if (email && orderEmail(db, o) === email) byEmail++;
+    if (phone && orderPhone(db, o) === phone) byPhone++;
   }
-  return { used, reserved, total: used + reserved, byEmail };
+  return { used, reserved, total: used + reserved, byPhone };
 }
 
-// Cupom que pode ser usado agora por esse e-mail (sem e-mail, o limite por cliente fica para o pedido).
-export function usableCoupon(db: Schema, rawCode: unknown, email?: string, now = new Date()): Coupon {
+// Cupom que pode ser usado agora por esse WhatsApp (sem número, o limite por cliente fica para o pedido).
+export function usableCoupon(db: Schema, rawCode: unknown, rawPhone?: unknown, now = new Date()): Coupon {
   const code = normalizeCode(rawCode);
   const coupon = db.coupons.find((c) => c.code === code);
   if (!code || !coupon || !coupon.active) throw new CouponError("Cupom inválido");
   if (todayInStore(now) > coupon.validUntil) throw new CouponError("Este cupom expirou");
-  const u = usage(db, coupon.id, email?.trim().toLowerCase(), now.getTime());
+  const phone = normalizePhone(rawPhone);
+  const u = usage(db, coupon.id, phone.length >= 10 ? phone : undefined, now.getTime());
   if (coupon.maxUses > 0 && u.total >= coupon.maxUses) throw new CouponError("Este cupom esgotou");
-  if (email && coupon.maxPerEmail > 0 && u.byEmail >= coupon.maxPerEmail)
-    throw new CouponError(coupon.maxPerEmail === 1 ? "Você já usou este cupom" : `Este cupom pode ser usado ${coupon.maxPerEmail} vezes por cliente, e você já usou todas`);
+  if (coupon.maxPerPhone > 0 && u.byPhone >= coupon.maxPerPhone)
+    throw new CouponError(
+      coupon.maxPerPhone === 1
+        ? "Este WhatsApp já usou este cupom"
+        : `Este cupom pode ser usado ${coupon.maxPerPhone} vezes por WhatsApp, e este número já usou todas`,
+    );
   return coupon;
 }
 
-export const toOffer = (c: Coupon): CouponOffer => ({ code: c.code, kind: c.kind, ...(c.kind === "percent" && { percent: c.percent }) });
+export const toOffer = (c: Coupon): CouponOffer => ({
+  code: c.code,
+  kind: c.kind,
+  ...(c.kind === "percent" && { percent: c.percent }),
+  ...(c.kind === "fixed" && { amount: c.amount }),
+});
 
 // Checkout: confere o código antes de aplicar no resumo (o pedido confere de novo).
-export const checkCoupon = (code: unknown, email?: unknown) =>
-  query((db) => toOffer(usableCoupon(db, code, typeof email === "string" && email ? email : undefined)));
+export const checkCoupon = (code: unknown, phone?: unknown) => query((db) => toOffer(usableCoupon(db, code, phone)));
 
 // ---- Admin ----
 
@@ -66,7 +78,7 @@ export const adminListCoupons = () =>
 
 type CouponInput = Omit<Coupon, "id" | "createdAt">;
 
-const KINDS: CouponKind[] = ["free_shipping", "percent"];
+const KINDS: CouponKind[] = ["free_shipping", "percent", "fixed"];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const validDate = (s: string) => DATE_RE.test(s) && new Date(`${s}T12:00:00Z`).toISOString().slice(0, 10) === s;
 
@@ -75,7 +87,7 @@ export function parseCoupon(body: unknown, partial = false): Partial<CouponInput
   const has = (k: string) => !partial || k in b;
   const out: Partial<CouponInput> = {};
   const errors: Record<string, string> = {};
-  const count = (k: "maxUses" | "maxPerEmail") => {
+  const count = (k: "maxUses" | "maxPerPhone") => {
     if (!has(k)) return;
     const raw = String(b[k] ?? "").trim();
     const n = raw === "" ? 0 : Number(raw);
@@ -97,12 +109,19 @@ export function parseCoupon(body: unknown, partial = false): Partial<CouponInput
     if (!(n >= 1 && n <= 90)) errors.percent = "Informe uma porcentagem entre 1 e 90";
     out.percent = n;
   }
+  if (out.kind === "fixed" || (partial && b.amount !== undefined && b.amount !== "")) {
+    // "1.234,50" ou "10,50" (vírgula = centavos) e também "10.50".
+    const raw = String(b.amount ?? "").trim();
+    const n = Math.round(Number(raw.includes(",") ? raw.replace(/\./g, "").replace(",", ".") : raw) * 100) / 100;
+    if (!(n >= 1 && n <= 10_000)) errors.amount = "Informe um valor entre R$ 1,00 e R$ 10.000,00";
+    out.amount = n;
+  }
   if (has("validUntil")) {
     out.validUntil = String(b.validUntil ?? "");
     if (!validDate(out.validUntil)) errors.validUntil = "Informe a data de validade";
   }
   count("maxUses");
-  count("maxPerEmail");
+  count("maxPerPhone");
   if (has("active")) out.active = b.active === undefined ? true : Boolean(b.active);
 
   if (Object.keys(errors).length) throw new CouponError("Confira os campos", 422, errors);
@@ -114,9 +133,10 @@ function assertUniqueCode(db: Schema, code: string | undefined, id?: string) {
     throw new CouponError("Já existe um cupom com esse código", 409, { code: "Já existe um cupom com esse código" });
 }
 
-// Frete grátis não guarda porcentagem.
+// Cada tipo guarda só o seu valor (porcentagem ou R$).
 function tidy(c: Coupon) {
   if (c.kind !== "percent") delete c.percent;
+  if (c.kind !== "fixed") delete c.amount;
   return c;
 }
 
@@ -138,6 +158,8 @@ export function updateCoupon(id: string, input: Partial<CouponInput>) {
     const next = { ...coupon, ...input };
     if (next.kind === "percent" && !(next.percent! > 0))
       throw new CouponError("Confira os campos", 422, { percent: "Informe uma porcentagem entre 1 e 90" });
+    if (next.kind === "fixed" && !(next.amount! > 0))
+      throw new CouponError("Confira os campos", 422, { amount: "Informe o valor do desconto" });
     Object.assign(coupon, next);
     return withUsage(db, tidy(coupon));
   });

@@ -2,8 +2,8 @@
 
 import { useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Building2, Home, Loader2, MapPin, MapPinned } from "lucide-react";
-import { ADDRESS_KINDS, formatCep } from "@/lib/delivery-pricing";
+import { Building2, Fence, Home, Loader2, MapPin, MapPinned } from "lucide-react";
+import { ADDRESS_KINDS, DROPOFF_LABEL, dropoffsFor, formatCep } from "@/lib/delivery-pricing";
 import { onlyDigits } from "@/lib/format";
 import type { Address, AddressKind } from "@/lib/types";
 
@@ -12,10 +12,11 @@ export const EMPTY_ADDRESS: Address = { cep: "", street: "", number: "", complem
 export const isAddressComplete = (a: Address) =>
   onlyDigits(a.cep).length === 8 && !!a.street.trim() && !!a.number.trim() && !!a.district.trim() && !!a.city.trim() && a.state.length === 2;
 
-const KIND_ICON: Record<AddressKind, typeof Home> = { casa: Home, apartamento: Building2, outro: MapPinned };
+const KIND_ICON: Record<AddressKind, typeof Home> = { casa: Home, apartamento: Building2, condominio: Fence, outro: MapPinned };
 
 // CEP → busca automática da rua/bairro/cidade; cliente completa número e complemento.
-// withKind (entrega do cliente): escolhe casa/apartamento/outro e o complemento vira obrigatório.
+// withKind (entrega do cliente): escolhe casa/apartamento/condomínio/outro e o complemento vira obrigatório;
+// em condomínio e apartamento, escolhe também como receber (portaria ou em casa).
 export function AddressFields({
   value, onChange, errors = {}, withKind = false,
 }: { value: Address; onChange: (a: Address) => void; errors?: Record<string, string>; withKind?: boolean }) {
@@ -24,6 +25,7 @@ export function AddressFields({
   const numberRef = useRef<HTMLInputElement>(null);
   const filled = !!value.street || !!cepError;
   const kind = ADDRESS_KINDS.find((k) => k.id === value.kind);
+  const dropoffs = dropoffsFor(value.kind);
   const set = (patch: Partial<Address>) => onChange({ ...value, ...patch });
 
   async function changeCep(raw: string) {
@@ -81,7 +83,7 @@ export function AddressFields({
             {withKind && (
               <div className="col-span-6">
                 <span className="mb-1.5 block text-sm font-medium text-muted">Tipo do endereço</span>
-                <div role="radiogroup" aria-label="Tipo do endereço" className="grid grid-cols-3 gap-2">
+                <div role="radiogroup" aria-label="Tipo do endereço" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                   {ADDRESS_KINDS.map((k) => {
                     const Icon = KIND_ICON[k.id];
                     const on = value.kind === k.id;
@@ -91,7 +93,8 @@ export function AddressFields({
                         type="button"
                         role="radio"
                         aria-checked={on}
-                        onClick={() => set({ kind: k.id })}
+                        // Trocar o tipo zera o "como receber" se a opção não existir no novo tipo.
+                        onClick={() => set({ kind: k.id, dropoff: value.dropoff && dropoffsFor(k.id).includes(value.dropoff) ? value.dropoff : undefined })}
                         className={`flex items-center justify-center gap-2 rounded-xl border px-2 py-2.5 text-sm font-medium transition ${
                           on ? "border-brand bg-brand/10 text-white" : "border-line text-muted hover:text-white"
                         }`}
@@ -104,12 +107,37 @@ export function AddressFields({
                 {errors.kind && <span className="mt-1 block text-sm text-red-400">{errors.kind}</span>}
               </div>
             )}
+            {withKind && dropoffs.length > 0 && (
+              <div className="col-span-6">
+                <span className="mb-1.5 block text-sm font-medium text-muted">Como você quer receber?</span>
+                <div role="radiogroup" aria-label="Como receber" className={`grid gap-2 ${dropoffs.length === 3 ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-2"}`}>
+                  {dropoffs.map((d) => {
+                    const on = value.dropoff === d;
+                    return (
+                      <button
+                        key={d}
+                        type="button"
+                        role="radio"
+                        aria-checked={on}
+                        onClick={() => set({ dropoff: d })}
+                        className={`rounded-xl border px-2 py-2.5 text-sm font-medium transition ${
+                          on ? "border-brand bg-brand/10 text-white" : "border-line text-muted hover:text-white"
+                        }`}
+                      >
+                        {DROPOFF_LABEL[d]}
+                      </button>
+                    );
+                  })}
+                </div>
+                {errors.dropoff && <span className="mt-1 block text-sm text-red-400">{errors.dropoff}</span>}
+              </div>
+            )}
             <Input className="col-span-2" label="Número" inputRef={numberRef} value={value.number} onChange={(v) => set({ number: v })} error={errors.number} />
             {withKind ? (
               <Input
                 className="col-span-4"
                 label={kind ? `Complemento (${kind.label.toLowerCase()})` : "Complemento"}
-                placeholder={kind?.hint ?? "Escolha casa, apartamento ou outro"}
+                placeholder={kind?.hint ?? "Escolha o tipo do endereço acima"}
                 autoComplete="address-line2"
                 value={value.complement}
                 onChange={(v) => set({ complement: v })}
