@@ -62,6 +62,7 @@ export default function CouponsAdminPage() {
                     {c.used}{c.maxUses > 0 ? `/${c.maxUses}` : ""} usos
                     {c.reserved > 0 && <span className="text-brand"> (+{c.reserved} reservado{c.reserved > 1 ? "s" : ""} em PIX)</span>}
                     {" • "}{c.maxPerPhone > 0 ? `${c.maxPerPhone}x por WhatsApp` : "sem limite por WhatsApp"}
+                    {c.firstPurchaseOnly && " • só 1ª compra"}
                   </p>
                 </div>
                 <Toggle checked={c.active} onChange={() => toggle(c)} label={c.active ? "Desligar cupom" : "Ligar cupom"} />
@@ -117,6 +118,7 @@ function CouponForm({ coupon, onSaved, onDeleted }: { coupon: AdminCoupon | null
     validUntil: coupon?.validUntil ?? "",
     maxUses: coupon ? String(coupon.maxUses || "") : "",
     maxPerPhone: coupon ? String(coupon.maxPerPhone || "") : "1",
+    firstPurchaseOnly: coupon?.firstPurchaseOnly ?? false,
     active: coupon?.active ?? true,
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -199,6 +201,14 @@ function CouponForm({ coupon, onSaved, onDeleted }: { coupon: AdminCoupon | null
         <Field label="Usos por WhatsApp" error={errors.maxPerPhone} hint="Por número de WhatsApp do pedido. Vazio = sem limite.">
           <input className="input" inputMode="numeric" value={v.maxPerPhone} onChange={(e) => set("maxPerPhone", digits(e.target.value))} placeholder="Sem limite" />
         </Field>
+      </div>
+
+      <div className="flex items-center justify-between gap-3 rounded-2xl bg-surface-2 p-4">
+        <div>
+          <p className="font-semibold">Só na primeira compra</p>
+          <p className="text-xs text-muted">Vale só para WhatsApp que nunca comprou. Se o cliente comprar sem usar o cupom, perde o direito a ele.</p>
+        </div>
+        <Toggle checked={v.firstPurchaseOnly} onChange={(x) => set("firstPurchaseOnly", x)} label="Só na primeira compra" />
       </div>
 
       <div className="flex items-center justify-between rounded-2xl bg-surface-2 p-4">

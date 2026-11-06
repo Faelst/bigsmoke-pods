@@ -124,6 +124,7 @@ export function OrderView({ id }: { id: string }) {
       )}
 
       {order.status === "saiu_para_entrega" && <OnTheWay trackingUrl={order.trackingUrl} />}
+      {order.status === "em_separacao" && order.trackingUrl && <OnTheWay trackingUrl={order.trackingUrl} pickingUp />}
 
       <div className="mt-5 grid gap-5 md:grid-cols-2">
         <section className="card p-5">
@@ -161,7 +162,8 @@ export function OrderView({ id }: { id: string }) {
   );
 }
 
-function OnTheWay({ trackingUrl }: { trackingUrl?: string }) {
+// pickingUp: o motoboy aceitou a corrida e está indo buscar o pedido na loja.
+function OnTheWay({ trackingUrl, pickingUp = false }: { trackingUrl?: string; pickingUp?: boolean }) {
   return (
     <motion.section
       initial={{ opacity: 0, y: 16 }}
@@ -176,9 +178,13 @@ function OnTheWay({ trackingUrl }: { trackingUrl?: string }) {
           </motion.span>
         </span>
         <div className="min-w-0">
-          <p className="font-display text-lg leading-tight">Seu pedido está a caminho!</p>
+          <p className="font-display text-lg leading-tight">{pickingUp ? "O motoboy está vindo retirar!" : "Seu pedido está a caminho!"}</p>
           <p className="text-sm text-muted">
-            {trackingUrl ? "Acompanhe o entregador em tempo real pelo app da Uber." : "O entregador já saiu com seu pedido."}
+            {pickingUp
+              ? "Ele já aceitou a corrida. Acompanhe pelo app da Uber."
+              : trackingUrl
+                ? "Acompanhe o entregador em tempo real pelo app da Uber."
+                : "O entregador já saiu com seu pedido."}
           </p>
         </div>
       </div>

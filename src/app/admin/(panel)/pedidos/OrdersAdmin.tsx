@@ -128,7 +128,8 @@ function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated: (o: A
   const [dispatching, setDispatching] = useState(false);
   const [link, setLink] = useState("");
   const c = order.customer;
-  const onTheWay = order.status === "saiu_para_entrega" || order.status === "entregue";
+  // Com o /ras o link chega ainda em separação (o motoboy está indo retirar).
+  const onTheWay = order.status === "saiu_para_entrega" || order.status === "entregue" || (order.status === "em_separacao" && !!order.trackingUrl);
   const previous = order.previousTracking ?? [];
 
   async function update(body: { status?: OrderStatus; trackingUrl?: string }, key: OrderStatus | "link") {
@@ -149,8 +150,8 @@ function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated: (o: A
     }
   }
 
-  // "Saiu para entrega" pede o link da corrida antes de confirmar.
-  const changeStatus = (s: OrderStatus) => (s === "saiu_para_entrega" ? setDispatching(true) : update({ status: s }, s));
+  // "Saiu para entrega" pede o link da corrida antes de confirmar (se o /ras ainda não trouxe).
+  const changeStatus = (s: OrderStatus) => (s === "saiu_para_entrega" && !order.trackingUrl ? setDispatching(true) : update({ status: s }, s));
 
   const linkInput = (placeholder = "Cole o link de compartilhar viagem da Uber") => (
     <label className="relative block">
@@ -171,7 +172,9 @@ function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated: (o: A
       ? `https://api.whatsapp.com/send?phone=55${c.phone}&text=${encodeURIComponent(
           previous.length
             ? `Olá ${c.name.split(" ")[0]}! A corrida anterior do seu pedido #${order.code} foi cancelada pelo app de entregas e já chamamos outro motoboy 🛵\nSegue o novo link para acompanhar o rastreio do motoboy: ${order.trackingUrl}`
-            : `Olá ${c.name.split(" ")[0]}! Sua entrega do pedido #${order.code} da Big Smoke Pods já está em andamento 🛵\nSegue o link para acompanhar o rastreio do motoboy: ${order.trackingUrl}`,
+            : order.status === "em_separacao"
+              ? `Olá ${c.name.split(" ")[0]}! Pedido #${order.code} da Big Smoke Pods: o motoboy já aceitou a corrida e está vindo retirar. Segue o link: ${order.trackingUrl}`
+              : `Olá ${c.name.split(" ")[0]}! Pedido #${order.code} da Big Smoke Pods: o motoboy acabou de retirar sua entrega e já está a caminho 🎉\nAcompanhe em tempo real: ${order.trackingUrl}`,
         )}`
       : null;
 

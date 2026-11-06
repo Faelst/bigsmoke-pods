@@ -8,7 +8,7 @@ import { sendText, waNumber, whatsappConfigured } from "./whatsapp";
 import type { Address, Order } from "./types";
 
 // Mensagens de WhatsApp da loja: aviso de pedido pago para a equipe, e para o cliente
-// o "saiu para entrega" (com o link da corrida) e o "combine a retirada".
+// o "motoboy aceitou a corrida" (com o link), o "saiu para entrega" e o "combine a retirada".
 
 const isPickup = (o: Order) => o.fulfillment === "pickup";
 
@@ -65,8 +65,10 @@ export function paidMessage(order: Order, name: string, phone: string) {
   return lines.join("\n");
 }
 
-// Comando pronto para copiar: é só colar o link da corrida no fim e enviar.
+// Comandos prontos para copiar. /ras: é só colar a mensagem de compartilhar viagem da Uber no fim
+// (só o link vai para o cliente). /saiu: quando o motoboy retira o pedido.
 export const rasTemplate = (order: Order) => `/ras - ${order.code} - `;
+export const saiuTemplate = (order: Order) => `/saiu - ${order.code}`;
 
 // Equipe: o pedido e, em mensagens separadas (para copiar), o endereço e o comando de despacho.
 export async function notifyOrderPaid(order: Order) {
@@ -89,10 +91,12 @@ export async function notifyOrderPaid(order: Order) {
   }
 }
 
-// Link trocado depois da saída: a Uber cancelou a corrida e outro motoboy foi chamado.
+// Link trocado: a Uber cancelou a corrida e outro motoboy foi chamado.
 const relinked = (order: Order) => !!order.trackingUrl && !!order.previousTracking?.length;
+const thanks = ["", `Obrigado pela preferência! ${SITE.name}`];
 
-export const shippedMessage = (order: Order) =>
+// Cliente: o motoboy aceitou a corrida (comando /ras) ou a corrida foi trocada.
+export const trackingMessage = (order: Order) =>
   (relinked(order)
     ? [
         `🔁 Atualização do pedido *#${order.code}*`,
@@ -103,25 +107,32 @@ export const shippedMessage = (order: Order) =>
         "",
         "O link anterior não vale mais.",
       ]
-    : [
-        `🛵 Pedido *#${order.code}*: sua entrega já está em andamento!`,
-        "",
-        ...(order.trackingUrl
-          ? [`Segue o link para acompanhar o rastreio do motoboy em tempo real:\n${order.trackingUrl}`]
-          : ["O motoboy já saiu com o seu pedido."]),
-      ]
+    : [`🛵 Pedido *#${order.code}*`, "", `O motoboy já aceitou a corrida e está vindo retirar. Segue o link:\n${order.trackingUrl}`]
   )
-    .concat(["", `Obrigado pela preferência! ${SITE.name}`])
+    .concat(thanks)
     .join("\n");
 
-// Cliente: pedido a caminho, com o link da corrida. Retirada não tem esse aviso.
-export async function notifyShipped(order: Order) {
+// Cliente: o motoboy retirou o pedido (comando /saiu ou "Saiu para entrega" no painel).
+export const shippedMessage = (order: Order) =>
+  [
+    `🛵 Pedido *#${order.code}*`,
+    "",
+    "O motoboy acabou de retirar sua entrega e já está a caminho 🎉",
+    ...(order.trackingUrl ? ["", `Acompanhe em tempo real:\n${order.trackingUrl}`] : []),
+  ]
+    .concat(thanks)
+    .join("\n");
+
+async function notifyCustomer(order: Order, text: string) {
   if (!whatsappConfigured || isPickup(order)) return false;
   const { phone } = await context(order);
   if (!phone) return false;
-  await sendText(waNumber(phone), shippedMessage(order));
+  await sendText(waNumber(phone), text);
   return true;
 }
+
+export const notifyTracking = (order: Order) => (order.trackingUrl ? notifyCustomer(order, trackingMessage(order)) : Promise.resolve(false));
+export const notifyShipped = (order: Order) => notifyCustomer(order, shippedMessage(order));
 
 // Equipe, menos quem fez a ação.
 export async function notifyTeam(text: string, except?: (phone: string) => boolean) {
