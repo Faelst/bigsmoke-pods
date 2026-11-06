@@ -38,6 +38,10 @@ function usage(db: Schema, couponId: string, phone?: string, now = Date.now()) {
   return { used, reserved, total: used + reserved, byPhone };
 }
 
+// Já comprou: pedido pago (ou além) ou PIX ainda no prazo, com ou sem cupom.
+// Quem comprou sem usar o cupom de primeira compra perde o direito a ele.
+const hasPurchased = (db: Schema, phone: string, now: number) => db.orders.some((o) => couponUse(o, now) && orderPhone(db, o) === phone);
+
 // Cupom que pode ser usado agora por esse WhatsApp (sem número, o limite por cliente fica para o pedido).
 export function usableCoupon(db: Schema, rawCode: unknown, rawPhone?: unknown, now = new Date()): Coupon {
   const code = normalizeCode(rawCode);
@@ -45,7 +49,8 @@ export function usableCoupon(db: Schema, rawCode: unknown, rawPhone?: unknown, n
   if (!code || !coupon || !coupon.active) throw new CouponError("Cupom inválido");
   if (todayInStore(now) > coupon.validUntil) throw new CouponError("Este cupom expirou");
   const phone = normalizePhone(rawPhone);
-  const u = usage(db, coupon.id, phone.length >= 10 ? phone : undefined, now.getTime());
+  const known = phone.length >= 10 ? phone : undefined;
+  const u = usage(db, coupon.id, known, now.getTime());
   if (coupon.maxUses > 0 && u.total >= coupon.maxUses) throw new CouponError("Este cupom esgotou");
   if (coupon.maxPerPhone > 0 && u.byPhone >= coupon.maxPerPhone)
     throw new CouponError(
@@ -53,6 +58,8 @@ export function usableCoupon(db: Schema, rawCode: unknown, rawPhone?: unknown, n
         ? "Este WhatsApp já usou este cupom"
         : `Este cupom pode ser usado ${coupon.maxPerPhone} vezes por WhatsApp, e este número já usou todas`,
     );
+  if (coupon.firstPurchaseOnly && known && hasPurchased(db, known, now.getTime()))
+    throw new CouponError("Este cupom é só para a primeira compra, e este WhatsApp já comprou com a gente");
   return coupon;
 }
 
@@ -122,6 +129,7 @@ export function parseCoupon(body: unknown, partial = false): Partial<CouponInput
   }
   count("maxUses");
   count("maxPerPhone");
+  if (has("firstPurchaseOnly")) out.firstPurchaseOnly = Boolean(b.firstPurchaseOnly);
   if (has("active")) out.active = b.active === undefined ? true : Boolean(b.active);
 
   if (Object.keys(errors).length) throw new CouponError("Confira os campos", 422, errors);

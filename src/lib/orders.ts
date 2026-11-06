@@ -9,7 +9,7 @@ import { deliveryAddressError, deliveryFee, parseAddress } from "./delivery-pric
 import { moveStock, shortage } from "./stock";
 import { CouponError, toOffer, usableCoupon } from "./coupons";
 import { applyCoupon, couponBase } from "./coupon-pricing";
-import { notifyOrderPaid, notifyShipped } from "./notifications";
+import { notifyOrderPaid, notifyShipped, notifyTracking } from "./notifications";
 import { later } from "./whatsapp";
 import { DeliveryError, deliveryTiming, quoteDelivery } from "./delivery";
 import { STATUS_FLOW, STATUS_LABEL, type Address, type Contact, type DeliveryQuote, type Fulfillment, type Order, type OrderItem, type OrderStatus, type OrderSummary } from "./types";
@@ -399,8 +399,8 @@ function parseTrackingUrl(raw: unknown) {
   throw new OrderError("Link de acompanhamento inválido (precisa começar com https://)");
 }
 
-// notify: avisa o cliente no WhatsApp quando o pedido sai para entrega (ou o link da corrida muda).
-// O comando /ras desliga para avisar ele mesmo e responder se deu certo.
+// notify: avisa o cliente no WhatsApp quando o pedido sai para entrega ou o link da corrida muda.
+// Os comandos /ras e /saiu desligam para avisar eles mesmos e responder se deu certo.
 export async function adminUpdateOrder(id: string, input: { status?: OrderStatus; trackingUrl?: unknown }, { notify = true } = {}) {
   if (input.status !== undefined && !(input.status in STATUS_LABEL)) throw new OrderError("Status inválido");
   const trackingUrl = input.trackingUrl === undefined ? null : parseTrackingUrl(input.trackingUrl);
@@ -415,15 +415,17 @@ export async function adminUpdateOrder(id: string, input: { status?: OrderStatus
       order.trackingUrl = trackingUrl;
     }
     if (input.status && order.status !== input.status) setStatus(db, order, input.status);
-    const shipped =
-      order.status === "saiu_para_entrega" && (before.status !== "saiu_para_entrega" || (!!order.trackingUrl && order.trackingUrl !== before.trackingUrl));
-    return { order: withCustomer(db, order), shipped };
+    const shipped = order.status === "saiu_para_entrega" && before.status !== "saiu_para_entrega";
+    const relinked = !!order.trackingUrl && order.trackingUrl !== before.trackingUrl && !["entregue", "cancelado"].includes(order.status);
+    return { order: withCustomer(db, order), shipped, relinked };
   });
+  // Saiu agora: o aviso de saída já leva o link. Só o link mudou: manda o link.
   if (notify && result.shipped) later(() => notifyShipped(result.order));
+  else if (notify && result.relinked) later(() => notifyTracking(result.order));
   return result.order;
 }
 
-// Para o comando /ras do WhatsApp (o código aparece no pedido do cliente e no aviso da equipe).
+// Para os comandos /ras e /saiu do WhatsApp (o código aparece no pedido do cliente e no aviso da equipe).
 export function findOrderByCode(code: string) {
   const c = code.trim().replace(/^#/, "").toUpperCase();
   const find = (db: Schema) => db.orders.filter((o) => o.code === c);

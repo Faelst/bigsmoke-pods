@@ -149,6 +149,8 @@ export type Coupon = {
   validUntil: string;
   maxUses: number;
   maxPerPhone: number;
+  // Só na primeira compra do WhatsApp: quem já tem um pedido pago (ou PIX em aberto) não pode usar.
+  firstPurchaseOnly?: boolean;
   active: boolean;
   createdAt: string;
 };
