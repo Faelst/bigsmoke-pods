@@ -4,7 +4,7 @@ import Image from "next/image";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { AtSign, Bike, ChevronRight, Clock, ExternalLink, History, Link2, Loader2, Mail, Navigation, RefreshCw, Search, Store } from "lucide-react";
+import { AtSign, Bike, ChevronRight, Clock, ExternalLink, History, Link2, Loader2, Mail, Navigation, PencilLine, Plus, RefreshCw, Search, Store } from "lucide-react";
 import { adminFetch, useAdminData } from "@/lib/admin-client";
 import { brl, formatDate, formatPhone, onlyDigits } from "@/lib/format";
 import { normalize } from "@/lib/products";
@@ -14,6 +14,7 @@ import { OrderTotals } from "@/components/OrderTotals";
 import { PaymentLabel, paymentShort } from "@/components/PaymentLabel";
 import { WhatsAppIcon } from "@/components/icons";
 import { PageTitle, Sheet } from "@/components/admin/ui";
+import { ManualSaleForm } from "./ManualSale";
 
 type AdminOrder = Order & { customer: { name: string; email: string; phone: string; instagram: string } | null };
 
@@ -27,6 +28,7 @@ export function OrdersAdmin() {
   const selectedId = params.get("id");
   const { data, setData } = useAdminData<{ orders: AdminOrder[] }>("/api/admin/orders");
   const [q, setQ] = useState("");
+  const [adding, setAdding] = useState(false);
 
   const setParam = (key: string, value: string | null) => {
     const next = new URLSearchParams(params);
@@ -60,7 +62,15 @@ export function OrdersAdmin() {
 
   return (
     <>
-      <PageTitle title="Pedidos" subtitle="Acompanhe e atualize o status dos pedidos" />
+      <PageTitle
+        title="Pedidos"
+        subtitle="Acompanhe e atualize o status dos pedidos"
+        action={
+          <button onClick={() => setAdding(true)} className="btn-brand py-2.5!">
+            <Plus className="size-4" /> Venda manual
+          </button>
+        }
+      />
 
       <label className="relative block">
         <Search className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-muted" />
@@ -95,6 +105,7 @@ export function OrdersAdmin() {
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                         <span className="font-semibold">#{o.code}</span>
                         <StatusBadge status={o.status} />
+                        {o.payment.method === "manual" && <ManualBadge />}
                         {o.preorder && <PreorderBadge />}
                         {o.fulfillment === "pickup" && <PickupBadge />}
                       </div>
@@ -118,6 +129,15 @@ export function OrdersAdmin() {
       <Sheet open={!!selected} onClose={() => setParam("id", null)} title={selected ? `Pedido #${selected.code}` : ""}>
         {selected && <OrderDetail key={selected.id} order={selected} onUpdated={onUpdated} />}
       </Sheet>
+
+      <Sheet open={adding} onClose={() => setAdding(false)} title="Venda manual">
+        <ManualSaleForm<AdminOrder>
+          onCreated={(order) => {
+            setData((d) => d && { orders: [order, ...d.orders] });
+            setAdding(false);
+          }}
+        />
+      </Sheet>
     </>
   );
 }
@@ -128,6 +148,7 @@ function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated: (o: A
   const [dispatching, setDispatching] = useState(false);
   const [link, setLink] = useState("");
   const c = order.customer;
+  const manual = order.payment.method === "manual";
   // Com o /ras o link chega ainda em separação (o motoboy está indo retirar).
   const onTheWay = order.status === "saiu_para_entrega" || order.status === "entregue" || (order.status === "em_separacao" && !!order.trackingUrl);
   const previous = order.previousTracking ?? [];
@@ -168,7 +189,7 @@ function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated: (o: A
   );
 
   const waTracking =
-    c && order.trackingUrl
+    c?.phone && order.trackingUrl
       ? `https://api.whatsapp.com/send?phone=55${c.phone}&text=${encodeURIComponent(
           previous.length
             ? `Olá ${c.name.split(" ")[0]}! A corrida anterior do seu pedido #${order.code} foi cancelada pelo app de entregas e já chamamos outro motoboy 🛵\nSegue o novo link para acompanhar o rastreio do motoboy: ${order.trackingUrl}`
@@ -184,6 +205,13 @@ function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated: (o: A
         <StatusBadge status={order.status} />
         <span className="text-sm text-muted">{formatDate(order.createdAt)}</span>
       </div>
+
+      {manual && (
+        <p className="flex items-center gap-2 rounded-2xl border border-line bg-surface-2 p-3 text-sm">
+          <PencilLine className="size-4 shrink-0 text-brand" />
+          Venda manual, feita por fora da loja. Lançou por engano? Cancele e os itens voltam ao estoque.
+        </p>
+      )}
 
       {order.fulfillment === "pickup" && (
         <p className="flex items-center gap-2 rounded-2xl border border-leaf/40 bg-leaf/5 p-3 text-sm">
@@ -309,18 +337,20 @@ function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated: (o: A
           {c.email ? (
             <p className="flex items-center gap-2 text-muted"><Mail className="size-4" /> {c.email}</p>
           ) : (
-            <p className="text-muted">Comprou sem conta</p>
+            <p className="text-muted">{manual ? "Comprou por fora da loja" : "Comprou sem conta"}</p>
           )}
           {c.instagram && <p className="mt-1 flex items-center gap-2 text-muted"><AtSign className="size-4" /> {c.instagram}</p>}
           <div className="mt-3 grid grid-cols-2 gap-2">
-            <a
-              href={`https://api.whatsapp.com/send?phone=55${c.phone}&text=${encodeURIComponent(`Olá ${c.name.split(" ")[0]}! Sobre seu pedido #${order.code} na Big Smoke Pods:`)}`}
-              target="_blank"
-              rel="noreferrer"
-              className="btn-ghost py-2.5! text-xs"
-            >
-              <WhatsAppIcon className="size-4 text-[#25D366]" /> {formatPhone(c.phone)}
-            </a>
+            {c.phone && (
+              <a
+                href={`https://api.whatsapp.com/send?phone=55${c.phone}&text=${encodeURIComponent(`Olá ${c.name.split(" ")[0]}! Sobre seu pedido #${order.code} na Big Smoke Pods:`)}`}
+                target="_blank"
+                rel="noreferrer"
+                className="btn-ghost py-2.5! text-xs"
+              >
+                <WhatsAppIcon className="size-4 text-[#25D366]" /> {formatPhone(c.phone)}
+              </a>
+            )}
             {c.instagram && (
               <a href={`https://www.instagram.com/${c.instagram}`} target="_blank" rel="noreferrer" className="btn-ghost py-2.5! text-xs">
                 <AtSign className="size-4 text-[#e1306c]" /> Instagram
@@ -375,6 +405,14 @@ function PreorderBadge() {
   return (
     <span className="inline-flex items-center gap-1 rounded-full bg-brand/15 px-2 py-0.5 text-xs font-semibold text-brand">
       <Clock className="size-3" /> Encomenda
+    </span>
+  );
+}
+
+function ManualBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-xs font-semibold">
+      <PencilLine className="size-3" /> Manual
     </span>
   );
 }

@@ -120,11 +120,14 @@ export type OrderItem = {
 
 // mpId/mpStatus: pagamento no Mercado Pago (pedidos de demonstração não têm).
 // "wallet" só existe em pedidos antigos, da fase de demonstração.
+// "manual": venda feita por fora da loja (WhatsApp, balcão) e lançada no painel; via = como o cliente pagou.
+export type ManualVia = "pix" | "card";
 type MpPayment = { mpId?: string; mpStatus?: string; paidAt?: string };
 export type Payment =
   | ({ method: "pix"; pixCode: string; expiresAt: string; ticketUrl?: string } & MpPayment)
   | ({ method: "card"; brand: string; last4: string; installments: number } & MpPayment)
-  | ({ method: "wallet"; wallet: Wallet } & MpPayment);
+  | ({ method: "wallet"; wallet: Wallet } & MpPayment)
+  | ({ method: "manual"; via: ManualVia } & MpPayment); // nunca tem mpId
 
 // Quem recebe o pedido (compra sem conta: nome, WhatsApp e e-mail do pagador).
 export type Contact = { name: string; phone: string; email?: string };
@@ -172,7 +175,8 @@ export type Order = {
   code: string;
   fulfillment?: Fulfillment;
   customerId?: string; // só quando comprou logado
-  contact?: Contact; // pedidos antigos (antes da compra sem conta) não têm
+  // Pedidos antigos (antes da compra sem conta) não têm. Na venda manual é opcional e o telefone pode vir vazio.
+  contact?: Contact;
   items: OrderItem[];
   subtotal?: number; // pedidos antigos não têm entrega
   address?: Address & GeoPoint;
