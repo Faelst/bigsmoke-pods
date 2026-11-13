@@ -12,7 +12,7 @@ import { applyCoupon, couponBase } from "./coupon-pricing";
 import { notifyOrderPaid, notifyShipped, notifyTracking } from "./notifications";
 import { later } from "./whatsapp";
 import { DeliveryError, deliveryTiming, quoteDelivery } from "./delivery";
-import { STATUS_FLOW, STATUS_LABEL, type Address, type Contact, type DeliveryQuote, type Fulfillment, type Order, type OrderItem, type OrderStatus, type OrderSummary } from "./types";
+import { STATUS_FLOW, STATUS_LABEL, type Address, type Contact, type DeliveryQuote, type Fulfillment, type ManualVia, type Order, type OrderItem, type OrderStatus, type OrderSummary } from "./types";
 
 export class OrderError extends Error {
   constructor(message: string, public status = 400) {
@@ -294,6 +294,8 @@ export async function createOrder(customerId: string | null, input: CreateInput)
   }
 }
 
+const isManual = (o: Order) => o.payment.method === "manual";
+
 // Status que ainda permitem devolver os itens ao estoque se o pedido for cancelado.
 const NOT_SHIPPED: OrderStatus[] = ["pago", "em_separacao"];
 
@@ -307,7 +309,8 @@ function setStatus(db: Schema, order: Order, status: OrderStatus) {
       moveStock(db, order.items, -1);
       order.stockDebited = true;
     }
-  } else if (status === "cancelado" && order.stockDebited && NOT_SHIPPED.includes(order.status)) {
+  } else if (status === "cancelado" && order.stockDebited && (NOT_SHIPPED.includes(order.status) || isManual(order))) {
+    // Venda manual cancelada foi lançada por engano: os itens voltam mesmo já "entregue".
     moveStock(db, order.items, 1);
     order.stockDebited = false;
   }
@@ -419,10 +422,71 @@ export async function adminUpdateOrder(id: string, input: { status?: OrderStatus
     const relinked = !!order.trackingUrl && order.trackingUrl !== before.trackingUrl && !["entregue", "cancelado"].includes(order.status);
     return { order: withCustomer(db, order), shipped, relinked };
   });
+  // Venda manual foi combinada por fora: o cliente não recebe aviso automático.
+  if (isManual(result.order)) return result.order;
   // Saiu agora: o aviso de saída já leva o link. Só o link mudou: manda o link.
   if (notify && result.shipped) later(() => notifyShipped(result.order));
   else if (notify && result.relinked) later(() => notifyTracking(result.order));
   return result.order;
+}
+
+type ManualInput = { items?: unknown; via?: unknown; total?: unknown; name?: unknown; phone?: unknown };
+
+// "89,90" ou 89.9 → 89.9
+function parseMoney(raw: unknown) {
+  const s = String(raw ?? "").trim();
+  return Math.round(Number(s.includes(",") ? s.replace(/\./g, "").replace(",", ".") : s) * 100) / 100;
+}
+
+// Venda feita por fora da loja (WhatsApp, PIX direto…): entra já entregue e debita o estoque na hora,
+// sem Mercado Pago, frete, cupom nem avisos. Vale também para produto desativado na loja.
+// total: valor recebido de fato (padrão: preço de catálogo dos itens).
+export async function adminCreateManualOrder(input: ManualInput) {
+  const via: ManualVia | null = input?.via === "pix" || input?.via === "card" ? input.via : null;
+  if (!via) throw new OrderError("Informe se a venda foi no PIX ou no cartão");
+  const lines = Array.isArray(input.items) ? (input.items as Record<string, unknown>[]) : [];
+  if (lines.length === 0) throw new OrderError("Adicione ao menos um item");
+  const name = String(input.name ?? "").trim().replace(/\s+/g, " ").slice(0, 80);
+  const phone = onlyDigits(String(input.phone ?? ""));
+  if (phone && phone.length !== 10 && phone.length !== 11) throw new OrderError("WhatsApp inválido: informe com DDD ou deixe em branco");
+  const hasTotal = input.total !== undefined && String(input.total).trim() !== "";
+  const received = hasTotal ? parseMoney(input.total) : null;
+  if (received !== null && !(received >= 0 && received <= 100_000)) throw new OrderError("Valor recebido inválido");
+
+  return transaction((db) => {
+    const items = lines.map((l): OrderItem => {
+      const p = db.products.find((x) => x.slug === l?.slug);
+      const qty = Math.floor(Number(l?.qty));
+      if (!p || !p.flavors.some((f) => f.name === l.flavor) || !(qty >= 1 && qty <= 999)) throw new OrderError("Item inválido: confira produto, sabor e quantidade");
+      return { slug: p.slug, name: p.name, flavor: String(l.flavor), price: p.price, qty, image: p.image };
+    });
+    // Sem saldo é sinal de estoque já desatualizado: corrige o estoque antes de lançar.
+    const short = shortage(db, items);
+    if (short)
+      throw new OrderError(
+        `Estoque insuficiente de ${short.item.name} (${short.item.flavor}): ${short.available === 0 ? "nenhuma unidade disponível" : `só ${short.available} disponível(is)`}. Ajuste o estoque em Produtos antes de lançar.`,
+        409,
+      );
+    const now = new Date();
+    const at = now.toISOString();
+    const subtotal = sumItems(items);
+    const order: Order = {
+      id: randomUUID(),
+      code: `BSP${now.getTime().toString(36).toUpperCase().slice(-6)}`,
+      ...((name || phone) && { contact: { name: name || "Cliente", phone } }),
+      items,
+      subtotal,
+      total: received ?? subtotal,
+      payment: { method: "manual", via, paidAt: at },
+      stockDebited: true,
+      status: "entregue",
+      history: [{ status: "entregue", at }],
+      createdAt: at,
+    };
+    moveStock(db, items, -1);
+    db.orders.push(order);
+    return withCustomer(db, order);
+  });
 }
 
 // Para os comandos /ras e /saiu do WhatsApp (o código aparece no pedido do cliente e no aviso da equipe).
@@ -468,7 +532,7 @@ export function adminStats() {
       revenueToday: paid.filter(isToday).reduce((s, o) => s + o.total, 0),
       awaitingPayment: db.orders.filter((o) => o.status === "aguardando_pagamento").length,
       toShip: db.orders.filter((o) => ["pago", "em_separacao"].includes(o.status)).length,
-      customers: new Set([...db.customers.map((c) => c.phone), ...db.orders.flatMap((o) => (o.contact ? [o.contact.phone] : []))]).size,
+      customers: new Set([...db.customers.map((c) => c.phone), ...db.orders.flatMap((o) => (o.contact?.phone ? [o.contact.phone] : []))]).size,
       activeProducts: db.products.filter((p) => p.active).length,
       daily,
       topProducts: [...top.values()].sort((a, b) => b.qty - a.qty).slice(0, 5),
@@ -494,7 +558,7 @@ export function adminListCustomers() {
     }));
     const guests = new Map<string, Order[]>();
     for (const o of db.orders)
-      if (!o.customerId && o.contact) guests.set(o.contact.phone, [...(guests.get(o.contact.phone) ?? []), o]);
+      if (!o.customerId && o.contact?.phone) guests.set(o.contact.phone, [...(guests.get(o.contact.phone) ?? []), o]);
     const guestRows = [...guests].map(([phone, orders]) => {
       const sorted = [...orders].sort(byNewest);
       return {

@@ -13,7 +13,9 @@ import type { Address, Order } from "./types";
 const isPickup = (o: Order) => o.fulfillment === "pickup";
 
 const paymentText = (o: Order) =>
-  o.payment.method === "pix" ? "PIX" : o.payment.method === "card" ? `Cartão ${o.payment.installments}x` : "Carteira digital";
+  o.payment.method === "manual"
+    ? `${o.payment.via === "pix" ? "PIX" : "Cartão"}, venda manual`
+    : o.payment.method === "pix" ? "PIX" : o.payment.method === "card" ? `Cartão ${o.payment.installments}x` : "Carteira digital";
 
 // Um número com problema não impede o envio para os outros.
 async function sendAll(phones: string[], send: (phone: string) => Promise<unknown>) {
