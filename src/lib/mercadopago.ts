@@ -1,5 +1,5 @@
 import "server-only";
-import { MercadoPagoConfig, MPPaymentError, Order } from "mercadopago";
+import { Invoice, MercadoPagoConfig, MPPaymentError, Order, Payment, PreApproval } from "mercadopago";
 import type { CreateOrderRequest } from "mercadopago/dist/clients/order/create/types";
 import type { OrderResponse } from "mercadopago/dist/clients/order/commonTypes";
 import type { Contact, OrderItem } from "./types";
@@ -18,7 +18,7 @@ export type MpOrder = OrderResponse;
 const money = (n: number) => n.toFixed(2);
 
 // extras: entrega e taxa de processamento, que também viram itens (a soma dos itens precisa bater com o total).
-// discount: desconto do cupom sobre os produtos.
+// discount: desconto sobre os produtos (cupom ou benefícios da assinatura).
 type Common = {
   orderId: string; code: string; total: number; contact: Contact & { email: string }; items: OrderItem[];
   discount?: number; extras: { title: string; amount: number }[];
@@ -26,6 +26,7 @@ type Common = {
 
 // Item não pode ter preço negativo: com cupom, o desconto é repartido entre os produtos
 // (proporcional ao valor de cada linha, em centavos; a sobra do arredondamento fica na última).
+// Linha zerada (pod do mês da assinatura) não vai: o Mercado Pago não aceita item de R$ 0.
 function productLines(items: OrderItem[], discount = 0) {
   if (!(discount > 0)) return items.map((i) => ({ title: `${i.name} (${i.flavor})`, unit_price: money(i.price), quantity: i.qty, external_code: i.slug }));
   const cents = items.map((i) => Math.round(i.price * 100) * i.qty);
@@ -34,8 +35,8 @@ function productLines(items: OrderItem[], discount = 0) {
   return items.map((i, k) => {
     const off = k === items.length - 1 ? left : Math.min(left, Math.round((Math.round(discount * 100) * cents[k]) / total));
     left -= off;
-    return { title: `${i.qty}x ${i.name} (${i.flavor}) com cupom`, unit_price: ((cents[k] - off) / 100).toFixed(2), quantity: 1, external_code: i.slug };
-  });
+    return { title: `${i.qty}x ${i.name} (${i.flavor}) com desconto`, unit_price: ((cents[k] - off) / 100).toFixed(2), quantity: 1, external_code: i.slug };
+  }).filter((l) => Number(l.unit_price) > 0);
 }
 
 function common({ orderId, code, total, contact, items, discount, extras }: Common): CreateOrderRequest {
@@ -143,3 +144,37 @@ export function rejectionMessage(detail?: string) {
       return "Pagamento recusado pela operadora. Tente outro cartão ou pague com PIX.";
   }
 }
+
+// ---- Assinatura (preapproval sem plano, cobrada no cartão tokenizado) ----
+
+const preapprovals = () => new PreApproval(config());
+const invoices = () => new Invoice(config());
+
+// O id da assinatura na loja vai como external_reference.
+export const createPreapproval = (input: { id: string; email: string; token: string; amount: number; backUrl: string }) =>
+  preapprovals().create({
+    body: {
+      reason: "Assinatura Big Smoke Pods",
+      external_reference: input.id,
+      payer_email: input.email,
+      card_token_id: input.token,
+      back_url: input.backUrl,
+      status: "authorized",
+      auto_recurring: { frequency: 1, frequency_type: "months", transaction_amount: input.amount, currency_id: "BRL" },
+    },
+  });
+
+export const getPreapproval = (id: string) => preapprovals().get({ id });
+// A documentação escreve "canceled" e a API costuma usar "cancelled": tenta as duas grafias.
+export const cancelPreapproval = (id: string) =>
+  preapprovals()
+    .update({ id, body: { status: "cancelled" } })
+    .catch(() => preapprovals().update({ id, body: { status: "canceled" } }));
+
+// Faturas (uma por mensalidade), com o pagamento de cada uma.
+export const listInvoices = async (preapprovalId: string) => (await invoices().search({ options: { preapproval_id: preapprovalId, limit: 100 } })).results ?? [];
+export const getInvoice = (id: string) => invoices().get({ id });
+export const getMpPayment = (id: string) => new Payment(config()).get({ id });
+// Fatura de assinatura a que um pagamento pertence (nenhuma: o pagamento não é de assinatura).
+export const findInvoiceByPayment = async (paymentId: string) =>
+  (await invoices().search({ options: { payment_id: Number(paymentId), limit: 1 } })).results?.[0] ?? null;

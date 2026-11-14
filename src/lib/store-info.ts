@@ -3,10 +3,10 @@
 import { useEffect } from "react";
 import { DEFAULT_SOCIAL } from "./site";
 import { createStore, useStore } from "./store";
-import type { DayHours, PaymentFees, SocialLinks, StoreStatus } from "./types";
+import type { DayHours, PaymentFees, SocialLinks, StoreStatus, SubscriptionPlan } from "./types";
 
-type State = { status: StoreStatus | null; hours: DayHours[] | null; social: SocialLinks; paymentFees: PaymentFees | null };
-const infoStore = createStore<State>({ status: null, hours: null, social: DEFAULT_SOCIAL, paymentFees: null });
+type State = { status: StoreStatus | null; hours: DayHours[] | null; social: SocialLinks; paymentFees: PaymentFees | null; plan: SubscriptionPlan | null };
+const infoStore = createStore<State>({ status: null, hours: null, social: DEFAULT_SOCIAL, paymentFees: null, plan: null });
 let fetchedAt = 0;
 
 export function refreshStoreInfo() {

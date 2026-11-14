@@ -1,6 +1,7 @@
 import { InvalidWebhookSignatureError, MPBadRequestError, MPNotFoundError, WebhookSignatureValidator } from "mercadopago";
 import { getMpOrder, mpConfigured } from "@/lib/mercadopago";
 import { applyMpOrder } from "@/lib/orders";
+import { syncByInvoice, syncByPayment, syncSubscription } from "@/lib/subscriptions";
 
 const PENDING = ["created", "processing", "action_required"];
 
@@ -29,9 +30,26 @@ export async function POST(req: Request) {
     }
   }
 
-  // Outros eventos (e orders que não são da loja) só são confirmados.
-  if (type !== "order" || !dataId) return new Response(null, { status: 200 });
+  if (!dataId) return new Response(null, { status: 200 });
   if (!mpConfigured) return Response.json({ error: "MP_ACCESS_TOKEN não configurado" }, { status: 503 });
+  // Assinatura (eventos "Planos e assinaturas" e "Pagamentos"): mudou de status, mensalidade cobrada
+  // ou pagamento estornado. O que não é de uma assinatura da loja é ignorado.
+  const subscription =
+    type === "subscription_preapproval" ? () => syncSubscription(String(dataId))
+    : type === "subscription_authorized_payment" ? () => syncByInvoice(String(dataId))
+    : type === "payment" ? () => syncByPayment(String(dataId))
+    : null;
+  if (subscription) {
+    try {
+      await subscription();
+    } catch (e) {
+      if (!(e instanceof MPBadRequestError || e instanceof MPNotFoundError)) throw e;
+      console.warn(`[mercadopago] webhook ${type} para id inexistente: ${dataId}`);
+    }
+    return new Response(null, { status: 200 });
+  }
+  // Outros eventos (e orders que não são da loja) só são confirmados.
+  if (type !== "order") return new Response(null, { status: 200 });
   // O status da notificação só indica o que esperar: logo após um aviso de order finalizada
   // (paga, cancelada…) a consulta às vezes ainda devolve a versão pendente, então consulta de novo.
   const notified = typeof body?.data?.status === "string" ? body.data.status : undefined;

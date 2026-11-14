@@ -15,7 +15,7 @@ export function Header() {
   const { count } = useCart();
   const { bump } = useCartUI();
   const { customer } = useSession();
-  const { social } = useStoreInfo();
+  const { social, plan } = useStoreInfo();
   const controls = useAnimationControls();
 
   useEffect(() => {
@@ -35,6 +35,7 @@ export function Header() {
         <nav className="ml-6 hidden items-center gap-6 text-sm text-muted md:flex">
           <Link href="/" className="transition hover:text-white">Produtos</Link>
           <Link href="/pedidos" className="transition hover:text-white">Meus pedidos</Link>
+          {plan?.enabled && <Link href="/assinatura" className="font-semibold text-brand transition hover:brightness-110">Assinatura</Link>}
           <a href={instagramUrl(social.instagram)} target="_blank" rel="noreferrer" className="transition hover:text-white">Instagram</a>
         </nav>
 

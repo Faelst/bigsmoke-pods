@@ -62,7 +62,8 @@ Configuração:
 1. Em [Suas integrações](https://www.mercadopago.com.br/developers/panel/app), crie a aplicação (Checkout Transparente) e
    copie a Public Key e o Access Token para `NEXT_PUBLIC_MP_PUBLIC_KEY` e `MP_ACCESS_TOKEN` (veja `.env.example`).
 2. Em **Webhooks**, cadastre `https://SEU-DOMINIO/api/webhooks/mercadopago`, evento **Order (Mercado Pago)**, e copie a
-   assinatura secreta para `MP_WEBHOOK_SECRET`.
+   assinatura secreta para `MP_WEBHOOK_SECRET`. Para a assinatura mensal, marque também **Planos e assinaturas** e
+   **Pagamentos** (mensalidade cobrada, recusada ou estornada).
 3. Cadastre uma chave PIX na conta do Mercado Pago (sem ela a API não gera PIX em produção).
 4. Na conta do Mercado Pago, deixe o parcelamento **sem juros para o comprador** (a loja absorve), senão o Mercado Pago
    cobra juros do cliente além da taxa de processamento da loja.
@@ -118,7 +119,22 @@ Sem `DATABASE_URL`, o app usa `data/db.json` (desenvolvimento local).
 API: `GET /api/products?q=&brand=`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/me`,
 `POST /api/auth/register`, `GET|POST /api/orders`, `GET /api/orders/:id`, `POST /api/webhooks/mercadopago`.
 Admin (exige sessão de admin): `/api/admin/stats`, `/api/admin/orders[/:id]`, `/api/admin/products[/:id]`,
-`/api/admin/customers`, `/api/admin/uploads`, `/api/admin/payments`.
+`/api/admin/customers`, `/api/admin/uploads`, `/api/admin/payments`, `/api/admin/subscriptions[/:id]`.
+Assinatura: `GET|POST|DELETE /api/subscription`.
+
+## Assinatura mensal
+
+Em **Admin → Assinantes** a loja liga o plano e define mensalidade, valor máximo do pod do mês, desconto do 2º pod e
+fidelidade. O cliente assina em `/assinatura` (precisa de conta) e o Mercado Pago cobra o cartão todo mês (assinatura sem
+plano, `POST /preapproval`). Cada mensalidade paga abre um ciclo de 1 mês com 1 pod do mês (o pedido sai só com o frete) e
+1 desconto de 2º pod, aplicados sozinhos no checkout de quem está logado. Não acumulam com cupom nem passam para o mês seguinte.
+
+- A primeira cobrança leva até cerca de 1 hora; os benefícios só valem com a mensalidade paga e somem se ela for estornada.
+- Durante a fidelidade o cliente não cancela pelo site (o admin cancela a qualquer momento). Cancelar não devolve a
+  mensalidade: só interrompe as próximas, e os benefícios seguem até o fim do mês pago.
+- Sem webhook (ex.: localhost) a loja consulta o Mercado Pago ao abrir `/assinatura`, o checkout ou pelo botão do admin.
+- Em teste, o e-mail da conta precisa ser o de um **usuário de teste comprador** do Mercado Pago, e nem todo cartão de
+  teste aceita recorrência (o Visa aceita).
 
 ## Mocks e próximos passos para produção
 

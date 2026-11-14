@@ -3,23 +3,26 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "motion/react";
-import { Home, Package, Search, ShoppingBag } from "lucide-react";
+import { Home, Package, Repeat, Search, ShoppingBag } from "lucide-react";
 import { cart, useCart } from "@/lib/cart";
+import { useStoreInfo } from "@/lib/store-info";
 
 export function BottomNav() {
   const pathname = usePathname();
   const { count } = useCart();
+  const { plan } = useStoreInfo();
 
   const items = [
     { href: "/", label: "Início", icon: Home, active: pathname === "/" },
     { href: "/#busca", label: "Buscar", icon: Search, active: false },
     { label: "Carrinho", icon: ShoppingBag, onClick: cart.open, badge: count },
+    ...(plan?.enabled ? [{ href: "/assinatura", label: "Assinar", icon: Repeat, active: pathname === "/assinatura" }] : []),
     { href: "/pedidos", label: "Pedidos", icon: Package, active: ["/pedidos", "/conta", "/entrar"].includes(pathname) || pathname.startsWith("/pedido/") },
   ];
 
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-line/60 bg-bg/85 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden">
-      <ul className="grid grid-cols-4">
+      <ul className={`grid ${items.length === 5 ? "grid-cols-5" : "grid-cols-4"}`}>
         {items.map(({ href, label, icon: Icon, active, onClick, badge }) => {
           const inner = (
             <span className="relative flex flex-col items-center gap-1 py-2.5 text-[11px]">

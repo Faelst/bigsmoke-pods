@@ -127,7 +127,9 @@ export type Payment =
   | ({ method: "pix"; pixCode: string; expiresAt: string; ticketUrl?: string } & MpPayment)
   | ({ method: "card"; brand: string; last4: string; installments: number } & MpPayment)
   | ({ method: "wallet"; wallet: Wallet } & MpPayment)
-  | ({ method: "manual"; via: ManualVia } & MpPayment); // nunca tem mpId
+  | ({ method: "manual"; via: ManualVia } & MpPayment) // nunca tem mpId
+  // Pedido zerado pelo pod do mês da assinatura (retirada no local): nada a cobrar.
+  | ({ method: "subscription" } & MpPayment);
 
 // Quem recebe o pedido (compra sem conta: nome, WhatsApp e e-mail do pagador).
 export type Contact = { name: string; phone: string; email?: string };
@@ -167,6 +169,69 @@ export type OrderCoupon = CouponOffer & { id: string; discount: number };
 // No admin: usos confirmados (pagos) e reservados (PIX aguardando pagamento).
 export type AdminCoupon = Coupon & { used: number; reserved: number };
 
+// ---- Assinatura ----
+
+// Plano único, configurado no admin.
+export type SubscriptionPlan = {
+  enabled: boolean; // desligado: ninguém novo assina (quem já assina continua)
+  price: number; // mensalidade
+  podLimit: number; // valor máximo do pod do mês; pod mais caro paga a diferença
+  secondPodPercent: number; // desconto no 2º pod do ciclo
+  minMonths: number; // fidelidade: o cliente só cancela pelo site depois de N mensalidades pagas (0 = sem)
+};
+
+// pendente: aguardando a 1ª cobrança. suspensa: mensalidade não paga (ou estornada). Os benefícios
+// não dependem do status e sim de haver um ciclo pago em vigor (assinatura cancelada vale até o fim dele).
+export type SubscriptionStatus = "pendente" | "ativa" | "suspensa" | "cancelada";
+
+// Um ciclo = uma mensalidade paga (id da fatura no Mercado Pago). Vale 1 mês a partir do pagamento.
+// reversed: pagamento estornado ou contestado depois, o ciclo deixa de valer.
+export type SubscriptionCycle = { id: string; paidAt: string; endsAt: string; amount: number; reversed?: boolean };
+
+export type Subscription = {
+  id: string;
+  customerId: string;
+  mpId: string; // preapproval no Mercado Pago
+  mpStatus?: string;
+  status: SubscriptionStatus;
+  price: number;
+  minMonths: number; // fidelidade combinada ao assinar
+  card: { brand: string; last4: string };
+  cycles: SubscriptionCycle[];
+  nextChargeAt?: string;
+  syncedAt?: string;
+  createdAt: string;
+  cancelledAt?: string;
+  cancelledBy?: "customer" | "admin" | "mercadopago";
+};
+
+// O que o assinante ainda tem no ciclo em vigor (igual no checkout e no servidor).
+export type SubscriberBenefit = {
+  subscriptionId: string;
+  cycle: string;
+  endsAt: string;
+  freePod: boolean; // pod do mês ainda não usado
+  secondPod: boolean; // desconto do 2º pod ainda não usado
+  podLimit: number;
+  percent: number;
+};
+
+// Gravado no pedido. freePod / secondPod: quanto cada benefício abateu dos produtos.
+export type OrderSubscription = { id: string; cycle: string; freePod: number; secondPod: number; percent: number; discount: number };
+
+// O que o cliente vê em /assinatura.
+export type SubscriptionView = {
+  status: SubscriptionStatus;
+  price: number;
+  card: { brand: string; last4: string };
+  createdAt: string;
+  nextChargeAt?: string;
+  paidMonths: number;
+  benefit: SubscriberBenefit | null;
+  canCancel: boolean;
+  cancelAfterMonths: number; // mensalidades que faltam para poder cancelar pelo site
+};
+
 // Entrega por motoboy (padrão; pedidos antigos não têm o campo) ou retirada no local, sem frete.
 export type Fulfillment = "delivery" | "pickup";
 
@@ -186,6 +251,7 @@ export type Order = {
   previousTracking?: { url: string; replacedAt: string }[];
   preorder?: { opensAt: string | null }; // feito com a loja fechada: envio na abertura
   coupon?: OrderCoupon; // desconto já abatido do total
+  subscription?: OrderSubscription; // benefícios do assinante, já abatidos do total (não acumula com cupom)
   paymentFee?: number; // taxa de processamento do pagamento, já somada ao total
   total: number;
   payment: Payment;

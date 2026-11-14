@@ -19,7 +19,7 @@ const orderPhone = (db: Schema, o: Order) => normalizePhone(o.contact?.phone ?? 
 
 // Como o estoque: PIX no prazo reserva o uso, pedido pago (ou além) usa de vez,
 // cancelado ou PIX expirado não conta.
-function couponUse(o: Order, now: number): "reserved" | "used" | null {
+export function couponUse(o: Order, now: number): "reserved" | "used" | null {
   if (o.status === "cancelado") return null;
   if (o.status !== "aguardando_pagamento") return "used";
   return o.payment.method === "pix" && new Date(o.payment.expiresAt).getTime() > now ? "reserved" : null;

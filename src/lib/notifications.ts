@@ -13,7 +13,9 @@ import type { Address, Order } from "./types";
 const isPickup = (o: Order) => o.fulfillment === "pickup";
 
 const paymentText = (o: Order) =>
-  o.payment.method === "manual"
+  o.payment.method === "subscription"
+    ? "assinatura"
+    : o.payment.method === "manual"
     ? `${o.payment.via === "pix" ? "PIX" : "Cartão"}, venda manual`
     : o.payment.method === "pix" ? "PIX" : o.payment.method === "card" ? `Cartão ${o.payment.installments}x` : "Carteira digital";
 
@@ -59,6 +61,8 @@ export function paidMessage(order: Order, name: string, phone: string) {
     ...(order.coupon
       ? [order.coupon.kind !== "free_shipping" ? `Cupom ${order.coupon.code}: −${brl(order.coupon.discount)}` : `Cupom ${order.coupon.code}: frete grátis`]
       : []),
+    ...(order.subscription?.freePod ? [`Pod do mês (assinatura): −${brl(order.subscription.freePod)}`] : []),
+    ...(order.subscription?.secondPod ? [`2º pod do assinante (${order.subscription.percent}%): −${brl(order.subscription.secondPod)}`] : []),
     ...(order.delivery ? [`Entrega: ${order.delivery.free ? "grátis" : brl(order.delivery.fee)}`] : []),
     ...(order.paymentFee ? [`Taxa de processamento: ${brl(order.paymentFee)}`] : []),
     `*Total: ${brl(order.total)}* (${paymentText(order)})`,
