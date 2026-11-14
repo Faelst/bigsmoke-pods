@@ -9,6 +9,8 @@ import { deliveryAddressError, deliveryFee, parseAddress } from "./delivery-pric
 import { moveStock, shortage } from "./stock";
 import { CouponError, toOffer, usableCoupon } from "./coupons";
 import { applyCoupon, couponBase } from "./coupon-pricing";
+import { benefitFor } from "./subscriptions";
+import { applySubscription } from "./subscription-pricing";
 import { notifyOrderPaid, notifyShipped, notifyTracking } from "./notifications";
 import { later } from "./whatsapp";
 import { DeliveryError, deliveryTiming, quoteDelivery } from "./delivery";
@@ -201,18 +203,26 @@ export async function createOrder(customerId: string | null, input: CreateInput)
     checkStock(db, items);
     const subtotal = sumItems(items);
     const { surge, preorder } = deliveryTiming(db.delivery, db.settings);
+    // Assinante logado: pod do mês e desconto do 2º pod entram sozinhos, e não acumulam com cupom.
+    const benefit = benefitFor(db, customerId);
+    const perk = applySubscription(benefit, items);
+    if (perk.discount > 0 && couponCode)
+      throw new OrderError("Cupom não acumula com os benefícios da assinatura. Remova o cupom para continuar.", 409);
     const coupon = couponFor(db, couponCode, contact.phone);
     if (pickup && coupon?.kind === "free_shipping")
       throw new OrderError("Cupom de frete grátis não vale para retirada no local (ela já é sem frete). Remova o cupom para continuar.", 409);
-    const fee = route ? deliveryFee(db.delivery.pricing, route.quote.distanceKm, route.quote.durationMin, subtotal, surge) : PICKUP_QUOTE;
+    // O frete grátis por valor de compra olha o que o cliente paga de produtos (pod do mês não conta).
+    const fee = route ? deliveryFee(db.delivery.pricing, route.quote.distanceKm, route.quote.durationMin, subtotal - perk.discount, surge) : PICKUP_QUOTE;
     const applied = applyCoupon(coupon && toOffer(coupon), subtotal, fee);
     const delivery = route ? applied.delivery : undefined;
-    const base = couponBase(subtotal, applied.productDiscount, delivery?.fee ?? 0);
+    const productDiscount = applied.productDiscount + perk.discount;
+    const base = couponBase(subtotal, productDiscount, delivery?.fee ?? 0);
     if (card && card.installments > maxInstallmentsFor(db.paymentFees, base))
       throw new OrderError("Esse número de parcelas não está disponível para o valor do pedido");
     const charge = paymentFee(db.paymentFees, base, input.method, card?.installments);
     const orderCoupon = coupon && { id: coupon.id, ...toOffer(coupon), discount: applied.discount };
-    return { items, subtotal, delivery, coupon: orderCoupon, productDiscount: applied.productDiscount, preorder, paymentFee: charge.fee, total: charge.total };
+    const subscription = benefit && perk.discount > 0 ? { id: benefit.subscriptionId, cycle: benefit.cycle, percent: benefit.percent, ...perk } : undefined;
+    return { items, subtotal, delivery, coupon: orderCoupon, subscription, productDiscount, preorder, paymentFee: charge.fee, total: charge.total };
   });
   // Preço, frete ou taxa mudaram desde que o cliente viu o total: não cobra um valor diferente,
   // nem por 1 centavo (a margem é só para a imprecisão do ponto flutuante).
@@ -235,9 +245,13 @@ export async function createOrder(customerId: string | null, input: CreateInput)
     ...(pickup ? { fulfillment: "pickup" as const } : { address: { ...address!.data, ...route!.point }, delivery: draft.delivery }),
     ...(draft.preorder && { preorder: draft.preorder }),
     ...(draft.coupon && { coupon: draft.coupon }),
+    ...(draft.subscription && { subscription: draft.subscription }),
     ...(draft.paymentFee > 0 && { paymentFee: draft.paymentFee }), total: draft.total, createdAt: at,
   };
-  if (card) {
+  if (draft.total === 0) {
+    // Pod do mês com retirada no local: nada a cobrar, o pedido já entra pago.
+    order = { ...base, payment: { method: "subscription", paidAt: at }, stockDebited: true, status: "pago", history: [{ status: "pago", at }] };
+  } else if (card) {
     const result = await createCardOrder({ ...charge, card }).catch(paymentError);
     if (!result.approved) throw new OrderError(rejectionMessage(result.detail), 402);
     const { mp } = result;
@@ -277,6 +291,9 @@ export async function createOrder(customerId: string | null, input: CreateInput)
       checkStock(db, order.items);
       // Idem para o último uso do cupom.
       if (order.coupon) couponFor(db, order.coupon.code, contact.phone);
+      // Idem para o pod do mês (outro pedido da mesma conta) ou se a mensalidade foi estornada.
+      if (order.subscription && Math.abs(applySubscription(benefitFor(db, customerId), order.items).discount - order.subscription.discount) > 0.005)
+        throw new OrderError("Os benefícios da sua assinatura mudaram. Confira o resumo e tente de novo.", 409);
       if (order.stockDebited) moveStock(db, order.items, -1);
       db.orders.push(order);
       return order;
@@ -285,6 +302,7 @@ export async function createOrder(customerId: string | null, input: CreateInput)
     if (saved.status === "pago") later(() => notifyOrderPaid(saved));
     return saved;
   } catch (e) {
+    if (!order.payment.mpId) throw e;
     // Cobrado mas sem pedido gravado: devolve o dinheiro (cartão) ou cancela o PIX.
     console.error(`[mercadopago] pedido ${id} não foi gravado; desfazendo pagamento ${order.payment.mpId}`, e);
     await undoMpOrder(order.payment.mpId!, order.payment.method === "card").catch((err) =>

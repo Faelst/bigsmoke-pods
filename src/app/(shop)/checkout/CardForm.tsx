@@ -25,10 +25,11 @@ const formatCpf = (v: string) =>
 // Os campos do Mercado Pago são iframes: o estilo vai como opção, não por CSS.
 const FIELD_STYLE = { color: "#f5f5f6", placeholderColor: "#9a9aa3b3", fontSize: "16px" };
 
+// Sem `fees` (assinatura): cobrança mensal, sem escolha de parcelas.
 export function CardForm({
-  ref, total, fees, installments, onInstallments,
+  ref, total, fees, installments = 1, onInstallments,
 }: {
-  ref: Ref<CardFormHandle>; total: number; fees: PaymentFees; installments: number; onInstallments: (n: number) => void;
+  ref: Ref<CardFormHandle>; total: number; fees?: PaymentFees; installments?: number; onInstallments?: (n: number) => void;
 }) {
   const [name, setName] = useState("");
   const [cpf, setCpf] = useState("");
@@ -37,9 +38,9 @@ export function CardForm({
   const [focused, setFocused] = useState<FieldName | null>(null);
   const [invalid, setInvalid] = useState<Partial<Record<FieldName, boolean>>>({});
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
-  const options = installmentOptions(fees, total);
+  const options = fees ? installmentOptions(fees, total) : [];
   // Próxima faixa que libera mais parcelas (tiers vêm ordenados pelo valor).
-  const nextTier = fees.tiers.find((t) => t.minTotal > total && t.maxInstallments > options.length);
+  const nextTier = fees?.tiers.find((t) => t.minTotal > total && t.maxInstallments > options.length);
 
   useEffect(() => {
     let cancelled = false;
@@ -165,9 +166,9 @@ export function CardForm({
         <span className="mb-1.5 block text-sm font-medium text-muted">CPF do titular</span>
         <input className="input" inputMode="numeric" placeholder="000.000.000-00" value={formatCpf(cpf)} onChange={(e) => setCpf(onlyDigits(e.target.value).slice(0, 11))} />
       </label>
-      <label className="block">
+      {fees && <label className="block">
         <span className="mb-1.5 block text-sm font-medium text-muted">Parcelas</span>
-        <select className="input appearance-none" value={installments} onChange={(e) => onInstallments(Number(e.target.value))}>
+        <select className="input appearance-none" value={installments} onChange={(e) => onInstallments?.(Number(e.target.value))}>
           {options.map((o) => (
             <option key={o.installments} value={o.installments}>
               {o.installments}x de {brl(o.each)}{o.fee > 0 ? ` (total ${brl(o.total)})` : " sem juros"}
@@ -179,7 +180,7 @@ export function CardForm({
             Em compras a partir de {brl(nextTier.minTotal)}, parcele em até {nextTier.maxInstallments}x.
           </span>
         )}
-      </label>
+      </label>}
     </div>
   );
 }

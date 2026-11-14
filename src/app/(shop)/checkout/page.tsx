@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Bike, Clock, CreditCard, Loader2, Lock, Mail, QrCode, ShoppingBag, Store, Ticket, User, X } from "lucide-react";
+import { Bike, Clock, CreditCard, Loader2, Lock, Mail, QrCode, Repeat, ShoppingBag, Store, Ticket, User, X } from "lucide-react";
 import { cart, useCart } from "@/lib/cart";
 import { brl, formatPhone, onlyDigits } from "@/lib/format";
 import { deliveryAddressError } from "@/lib/delivery-pricing";
@@ -13,10 +13,11 @@ import { formatOpening } from "@/lib/hours";
 import { rememberOrder, saveCheckout, savedCheckout, type SavedCheckout } from "@/lib/my-orders";
 import { maxInstallmentsFor, paymentFee } from "@/lib/payment-fees";
 import { applyCoupon, couponBase, couponLabel } from "@/lib/coupon-pricing";
+import { applySubscription, percentLabel } from "@/lib/subscription-pricing";
 import { useSession } from "@/lib/session";
 import { refreshStoreInfo, useStoreInfo } from "@/lib/store-info";
 import { EMAIL_RE } from "@/lib/validation";
-import type { Address, Contact, CouponOffer, DeliveryQuote, Fulfillment } from "@/lib/types";
+import type { Address, Contact, CouponOffer, DeliveryQuote, Fulfillment, SubscriberBenefit } from "@/lib/types";
 import { AddressFields, EMPTY_ADDRESS, isAddressComplete } from "@/components/AddressFields";
 import { WhatsAppIcon } from "@/components/icons";
 import { CardForm, type CardFormHandle } from "./CardForm";
@@ -57,6 +58,23 @@ function useDeliveryQuote(address: Address, subtotal: number, enabled: boolean) 
   return state?.key === key ? state : { key, loading: true };
 }
 
+// O que o assinante logado ainda tem para usar no mês (o servidor confere de novo ao criar o pedido).
+function useSubscriberBenefit(customerId?: string) {
+  const [state, setState] = useState<{ id: string; benefit: SubscriberBenefit | null } | null>(null);
+  useEffect(() => {
+    if (!customerId) return;
+    let cancelled = false;
+    fetch("/api/subscription")
+      .then((r) => r.json())
+      .then((d) => !cancelled && setState({ id: customerId, benefit: d.subscription?.benefit ?? null }))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [customerId]);
+  return customerId && state?.id === customerId ? state.benefit : null;
+}
+
 const EMPTY_CONTACT: Contact = { name: "", phone: "", email: "" };
 const isContactComplete = (c: Contact) =>
   c.name.trim().length >= 2 && [10, 11].includes(onlyDigits(c.phone).length) && EMAIL_RE.test((c.email ?? "").trim());
@@ -76,7 +94,11 @@ export default function CheckoutPage() {
   const [addressDraft, setAddress] = useState<Address | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [coupon, setCoupon] = useState<CouponOffer | null>(null);
+  const [couponDraft, setCoupon] = useState<CouponOffer | null>(null);
+  // Assinante: pod do mês e desconto do 2º pod entram sozinhos e não acumulam com cupom.
+  const benefit = useSubscriberBenefit(customer?.id);
+  const perk = applySubscription(benefit, items);
+  const coupon = perk.discount > 0 ? null : couponDraft;
 
   // Dados do aparelho só existem no navegador: carrega depois de montar.
   useEffect(() => {
@@ -89,7 +111,7 @@ export default function CheckoutPage() {
   const contact = contactDraft ?? saved?.contact ?? (customer ? { name: customer.name, phone: customer.phone, email: customer.email } : EMPTY_CONTACT);
   const address = addressDraft ?? saved?.address ?? customer?.address ?? EMPTY_ADDRESS;
   const identified = isContactComplete(contact);
-  const delivery = useDeliveryQuote(address, total, identified && !pickup);
+  const delivery = useDeliveryQuote(address, total - perk.discount, identified && !pickup);
   // Com cupom de frete grátis, a entrega cotada aparece zerada. Retirada não tem frete.
   const applied = applyCoupon(coupon, total, delivery?.quote ?? { fee: 0, distanceKm: 0, durationMin: 0, free: false });
   const quote = pickup ? undefined : delivery?.quote && applied.delivery;
@@ -98,11 +120,13 @@ export default function CheckoutPage() {
   const ready = pickup ? identified : !!quote && !addressError;
   const pickupCouponError = pickup && coupon?.kind === "free_shipping" ? "Cupom de frete grátis não vale para retirada no local (ela já é sem frete)." : null;
   // Mesma conta do servidor (lib/orders.ts), para a taxa sair igual nos dois lados.
-  const orderTotal = couponBase(total, applied.productDiscount, quote?.fee ?? 0);
+  const orderTotal = couponBase(total, applied.productDiscount + perk.discount, quote?.fee ?? 0);
   // Parcelas e taxa de processamento pela tabela do admin (o servidor confere de novo).
   const installments = paymentFees ? Math.min(installmentsDraft, maxInstallmentsFor(paymentFees, orderTotal)) : 1;
   const charge = paymentFees && paymentFee(paymentFees, orderTotal, method, method === "card" ? installments : 1);
   const grandTotal = charge?.total ?? orderTotal;
+  // Só o pod do mês com retirada no local: nada a pagar.
+  const free = ready && grandTotal === 0;
 
   if (items.length === 0 && !submitting) {
     return (
@@ -118,7 +142,7 @@ export default function CheckoutPage() {
     setSubmitting(true);
     setError(null);
     let card;
-    if (method === "card") {
+    if (method === "card" && !free) {
       try {
         card = await cardForm.current!.tokenize();
       } catch (e) {
@@ -134,7 +158,7 @@ export default function CheckoutPage() {
         contact,
         fulfillment,
         ...(!pickup && { address }),
-        method,
+        method: free ? "pix" : method,
         card,
         coupon: coupon?.code,
         expectedTotal: grandTotal,
@@ -301,6 +325,16 @@ export default function CheckoutPage() {
 
           {/* 3. Pagamento */}
           <Step n={3} title="Pagamento" disabled={!ready}>
+            {free ? (
+              <div className="flex gap-4 rounded-2xl border border-leaf/30 bg-leaf/5 p-4 text-sm">
+                <Repeat className="size-10 shrink-0 text-leaf" />
+                <div>
+                  <p className="font-semibold">Nada a pagar</p>
+                  <p className="mt-1 text-muted">Este pedido é o pod do mês da sua assinatura, com retirada no local.</p>
+                </div>
+              </div>
+            ) : (
+            <>
             <div className="grid grid-cols-2 gap-1.5 rounded-2xl bg-surface-2 p-1.5">
               {([
                 { id: "pix", label: "PIX", icon: QrCode },
@@ -344,6 +378,8 @@ export default function CheckoutPage() {
                 )}
               </motion.div>
             </AnimatePresence>
+            </>
+            )}
           </Step>
         </div>
 
@@ -362,7 +398,14 @@ export default function CheckoutPage() {
               </li>
             ))}
           </ul>
-          <CouponField coupon={coupon} phone={contact.phone} onChange={setCoupon} />
+          {perk.discount > 0 ? (
+            <p className="mt-4 flex items-center gap-3 rounded-2xl border border-leaf/40 bg-leaf/5 p-3 text-sm">
+              <Repeat className="size-5 shrink-0 text-leaf" />
+              <span>Benefícios da sua assinatura aplicados. <span className="text-muted">Não acumulam com cupom.</span></span>
+            </p>
+          ) : (
+            <CouponField coupon={coupon} phone={contact.phone} onChange={setCoupon} />
+          )}
           {pickupCouponError && <p className="mt-2 text-sm text-red-300">{pickupCouponError}</p>}
           <div className="mt-4 flex flex-col gap-1.5 border-t border-line pt-4 text-sm">
             <div className="flex justify-between text-muted"><span>Subtotal</span><span>{brl(total)}</span></div>
@@ -370,6 +413,12 @@ export default function CheckoutPage() {
               <span>{pickup ? "Retirada no local" : "Entrega"}</span>
               <span>{pickup ? <span className="font-semibold text-leaf">Grátis</span> : quote ? (quote.free ? <span className="font-semibold text-leaf">Grátis</span> : brl(quote.fee)) : delivery?.loading ? "Calculando…" : "Informe o endereço"}</span>
             </div>
+            {perk.freePod > 0 && (
+              <div className="flex justify-between text-leaf"><span>Pod do mês (assinatura)</span><span>−{brl(perk.freePod)}</span></div>
+            )}
+            {perk.secondPod > 0 && benefit && (
+              <div className="flex justify-between text-leaf"><span>2º pod do assinante ({percentLabel(benefit.percent)})</span><span>−{brl(perk.secondPod)}</span></div>
+            )}
             {coupon && (
               <div className="flex justify-between text-leaf">
                 <span>Cupom {coupon.code}</span>
@@ -407,7 +456,7 @@ export default function CheckoutPage() {
             className="btn-brand mt-5 w-full text-lg"
           >
             {submitting ? <Loader2 className="size-5 animate-spin" /> : <Lock className="size-4" />}
-            {`${!pickup && delivery?.preorder ? "Encomendar" : method === "pix" ? "Gerar PIX" : "Pagar"} ${brl(grandTotal)}`}
+            {free ? "Confirmar pedido" : `${!pickup && delivery?.preorder ? "Encomendar" : method === "pix" ? "Gerar PIX" : "Pagar"} ${brl(grandTotal)}`}
           </button>
           <p className="mt-3 text-center text-xs text-muted">Pagamento processado com segurança pelo Mercado Pago.</p>
         </aside>
