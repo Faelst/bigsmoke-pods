@@ -7,11 +7,11 @@ import type { Flavor, Product } from "./types";
 
 const inStock = (p: Product) => p.flavors.some((f) => f.stock > 0);
 
-// Vitrine: primeiro o que tem estoque disponível, depois os esgotados; em cada grupo, do menor
-// para o maior preço (e mais estoque primeiro quando o preço empata).
+// Vitrine: primeiro o que tem estoque disponível, depois os esgotados; em cada grupo, do maior
+// para o menor preço (e mais estoque primeiro quando o preço empata).
 const totalStock = (p: Product) => p.flavors.reduce((s, f) => s + Math.max(0, f.stock), 0);
 const byShelf = (a: Product, b: Product) =>
-  Number(inStock(b)) - Number(inStock(a)) || a.price - b.price || totalStock(b) - totalStock(a) || a.name.localeCompare(b.name, "pt-BR");
+  Number(inStock(b)) - Number(inStock(a)) || b.price - a.price || totalStock(b) - totalStock(a) || a.name.localeCompare(b.name, "pt-BR");
 
 // Na loja, o estoque de cada sabor já vem sem o que está reservado em PIX pendentes.
 export const listActiveProducts = () =>
