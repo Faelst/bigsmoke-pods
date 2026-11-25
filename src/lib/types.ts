@@ -129,7 +129,9 @@ export type Payment =
   | ({ method: "wallet"; wallet: Wallet } & MpPayment)
   | ({ method: "manual"; via: ManualVia } & MpPayment) // nunca tem mpId
   // Pedido zerado pelo pod do mês da assinatura (retirada no local): nada a cobrar.
-  | ({ method: "subscription" } & MpPayment);
+  | ({ method: "subscription" } & MpPayment)
+  // Pedido zerado por cupom (ex.: 100% com retirada no local): nada a cobrar.
+  | ({ method: "coupon" } & MpPayment);
 
 // Quem recebe o pedido (compra sem conta: nome, WhatsApp e e-mail do pagador).
 export type Contact = { name: string; phone: string; email?: string };
@@ -151,6 +153,7 @@ export type Coupon = {
   kind: CouponKind;
   percent?: number; // só em "percent": desconto sobre os produtos (sem o frete)
   amount?: number; // só em "fixed": R$ abatidos dos produtos (no máximo o valor deles)
+  freeShipping?: boolean; // só em "percent" e "fixed": além do desconto, zera a entrega
   validUntil: string;
   maxUses: number;
   maxPerPhone: number;
@@ -161,9 +164,10 @@ export type Coupon = {
 };
 
 // O que o checkout recebe ao validar um código.
-export type CouponOffer = Pick<Coupon, "code" | "kind" | "percent" | "amount">;
+export type CouponOffer = Pick<Coupon, "code" | "kind" | "percent" | "amount" | "freeShipping">;
 
-// Gravado no pedido. discount: quanto o cupom abateu (no frete grátis, o valor da entrega).
+// Gravado no pedido. discount: quanto o cupom abateu (no frete grátis, o valor da entrega;
+// no desconto com frete grátis junto, só a parte dos produtos).
 export type OrderCoupon = CouponOffer & { id: string; discount: number };
 
 // No admin: usos confirmados (pagos) e reservados (PIX aguardando pagamento).

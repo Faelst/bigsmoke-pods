@@ -15,6 +15,8 @@ const isPickup = (o: Order) => o.fulfillment === "pickup";
 const paymentText = (o: Order) =>
   o.payment.method === "subscription"
     ? "assinatura"
+    : o.payment.method === "coupon"
+    ? "cupom, sem cobrança"
     : o.payment.method === "manual"
     ? `${o.payment.via === "pix" ? "PIX" : "Cartão"}, venda manual`
     : o.payment.method === "pix" ? "PIX" : o.payment.method === "card" ? `Cartão ${o.payment.installments}x` : "Carteira digital";
@@ -59,7 +61,7 @@ export function paidMessage(order: Order, name: string, phone: string) {
     "",
     ...(order.subtotal !== undefined ? [`Subtotal: ${brl(order.subtotal)}`] : []),
     ...(order.coupon
-      ? [order.coupon.kind !== "free_shipping" ? `Cupom ${order.coupon.code}: −${brl(order.coupon.discount)}` : `Cupom ${order.coupon.code}: frete grátis`]
+      ? [order.coupon.kind !== "free_shipping" ? `Cupom ${order.coupon.code}: −${brl(order.coupon.discount)}${order.coupon.freeShipping ? " + frete grátis" : ""}` : `Cupom ${order.coupon.code}: frete grátis`]
       : []),
     ...(order.subscription?.freePod ? [`Pod do mês (assinatura): −${brl(order.subscription.freePod)}`] : []),
     ...(order.subscription?.secondPod ? [`2º pod do assinante (${order.subscription.percent}%): −${brl(order.subscription.secondPod)}`] : []),

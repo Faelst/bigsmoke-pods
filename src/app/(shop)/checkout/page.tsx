@@ -125,7 +125,7 @@ export default function CheckoutPage() {
   const installments = paymentFees ? Math.min(installmentsDraft, maxInstallmentsFor(paymentFees, orderTotal)) : 1;
   const charge = paymentFees && paymentFee(paymentFees, orderTotal, method, method === "card" ? installments : 1);
   const grandTotal = charge?.total ?? orderTotal;
-  // Só o pod do mês com retirada no local: nada a pagar.
+  // Pod do mês ou cupom de 100% com retirada no local: nada a pagar.
   const free = ready && grandTotal === 0;
 
   if (items.length === 0 && !submitting) {
@@ -330,7 +330,7 @@ export default function CheckoutPage() {
                 <Repeat className="size-10 shrink-0 text-leaf" />
                 <div>
                   <p className="font-semibold">Nada a pagar</p>
-                  <p className="mt-1 text-muted">Este pedido é o pod do mês da sua assinatura, com retirada no local.</p>
+                  <p className="mt-1 text-muted">{perk.discount > 0 ? "Este pedido é o pod do mês da sua assinatura, com retirada no local." : "O cupom cobre o valor total deste pedido."}</p>
                 </div>
               </div>
             ) : (

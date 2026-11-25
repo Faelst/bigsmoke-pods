@@ -249,8 +249,8 @@ export async function createOrder(customerId: string | null, input: CreateInput)
     ...(draft.paymentFee > 0 && { paymentFee: draft.paymentFee }), total: draft.total, createdAt: at,
   };
   if (draft.total === 0) {
-    // Pod do mês com retirada no local: nada a cobrar, o pedido já entra pago.
-    order = { ...base, payment: { method: "subscription", paidAt: at }, stockDebited: true, status: "pago", history: [{ status: "pago", at }] };
+    // Pod do mês ou cupom de 100% com retirada no local: nada a cobrar, o pedido já entra pago.
+    order = { ...base, payment: { method: draft.subscription ? "subscription" : "coupon", paidAt: at }, stockDebited: true, status: "pago", history: [{ status: "pago", at }] };
   } else if (card) {
     const result = await createCardOrder({ ...charge, card }).catch(paymentError);
     if (!result.approved) throw new OrderError(rejectionMessage(result.detail), 402);
