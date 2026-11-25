@@ -118,6 +118,7 @@ function CouponForm({ coupon, onSaved, onDeleted }: { coupon: AdminCoupon | null
     validUntil: coupon?.validUntil ?? "",
     maxUses: coupon ? String(coupon.maxUses || "") : "",
     maxPerPhone: coupon ? String(coupon.maxPerPhone || "") : "1",
+    freeShipping: coupon?.freeShipping ?? false,
     firstPurchaseOnly: coupon?.firstPurchaseOnly ?? false,
     active: coupon?.active ?? true,
   });
@@ -188,6 +189,16 @@ function CouponForm({ coupon, onSaved, onDeleted }: { coupon: AdminCoupon | null
         </Field>
       ) : (
         <p className="-mt-2 text-xs text-muted">Zera a entrega. Não libera endereços fora do raio de entrega da loja.</p>
+      )}
+
+      {v.kind !== "free_shipping" && (
+        <div className="flex items-center justify-between gap-3 rounded-2xl bg-surface-2 p-4">
+          <div>
+            <p className="font-semibold">Frete grátis também</p>
+            <p className="text-xs text-muted">Além do desconto, zera a entrega. Não libera endereços fora do raio de entrega da loja.</p>
+          </div>
+          <Toggle checked={v.freeShipping} onChange={(x) => set("freeShipping", x)} label="Frete grátis também" />
+        </div>
       )}
 
       <Field label="Válido até (inclusive)" error={errors.validUntil}>

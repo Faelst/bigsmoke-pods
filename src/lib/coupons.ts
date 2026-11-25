@@ -19,7 +19,7 @@ const orderPhone = (db: Schema, o: Order) => normalizePhone(o.contact?.phone ?? 
 
 // Como o estoque: PIX no prazo reserva o uso, pedido pago (ou além) usa de vez,
 // cancelado ou PIX expirado não conta.
-function couponUse(o: Order, now: number): "reserved" | "used" | null {
+export function couponUse(o: Order, now: number): "reserved" | "used" | null {
   if (o.status === "cancelado") return null;
   if (o.status !== "aguardando_pagamento") return "used";
   return o.payment.method === "pix" && new Date(o.payment.expiresAt).getTime() > now ? "reserved" : null;
@@ -68,6 +68,7 @@ export const toOffer = (c: Coupon): CouponOffer => ({
   kind: c.kind,
   ...(c.kind === "percent" && { percent: c.percent }),
   ...(c.kind === "fixed" && { amount: c.amount }),
+  ...(c.kind !== "free_shipping" && c.freeShipping && { freeShipping: true }),
 });
 
 // Checkout: confere o código antes de aplicar no resumo (o pedido confere de novo).
@@ -113,7 +114,7 @@ export function parseCoupon(body: unknown, partial = false): Partial<CouponInput
   // A porcentagem só importa no cupom de desconto (no PATCH, updateCoupon confere o resultado).
   if (out.kind === "percent" || (partial && b.percent !== undefined && b.percent !== "")) {
     const n = Math.round(Number(String(b.percent ?? "").replace(",", ".")) * 100) / 100;
-    if (!(n >= 1 && n <= 90)) errors.percent = "Informe uma porcentagem entre 1 e 90";
+    if (!(n >= 1 && n <= 100)) errors.percent = "Informe uma porcentagem entre 1 e 100";
     out.percent = n;
   }
   if (out.kind === "fixed" || (partial && b.amount !== undefined && b.amount !== "")) {
@@ -129,6 +130,7 @@ export function parseCoupon(body: unknown, partial = false): Partial<CouponInput
   }
   count("maxUses");
   count("maxPerPhone");
+  if (has("freeShipping")) out.freeShipping = Boolean(b.freeShipping);
   if (has("firstPurchaseOnly")) out.firstPurchaseOnly = Boolean(b.firstPurchaseOnly);
   if (has("active")) out.active = b.active === undefined ? true : Boolean(b.active);
 
@@ -141,10 +143,11 @@ function assertUniqueCode(db: Schema, code: string | undefined, id?: string) {
     throw new CouponError("Já existe um cupom com esse código", 409, { code: "Já existe um cupom com esse código" });
 }
 
-// Cada tipo guarda só o seu valor (porcentagem ou R$).
+// Cada tipo guarda só o seu valor (porcentagem ou R$). Frete grátis junto só existe nos cupons de desconto.
 function tidy(c: Coupon) {
   if (c.kind !== "percent") delete c.percent;
   if (c.kind !== "fixed") delete c.amount;
+  if (c.kind === "free_shipping" || !c.freeShipping) delete c.freeShipping;
   return c;
 }
 
@@ -165,7 +168,7 @@ export function updateCoupon(id: string, input: Partial<CouponInput>) {
     assertUniqueCode(db, input.code, id);
     const next = { ...coupon, ...input };
     if (next.kind === "percent" && !(next.percent! > 0))
-      throw new CouponError("Confira os campos", 422, { percent: "Informe uma porcentagem entre 1 e 90" });
+      throw new CouponError("Confira os campos", 422, { percent: "Informe uma porcentagem entre 1 e 100" });
     if (next.kind === "fixed" && !(next.amount! > 0))
       throw new CouponError("Confira os campos", 422, { amount: "Informe o valor do desconto" });
     Object.assign(coupon, next);

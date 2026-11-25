@@ -8,7 +8,8 @@ import { UBER_PRESETS } from "./delivery-pricing";
 import { ALWAYS_OPEN } from "./hours";
 import { DEFAULT_SOCIAL } from "./site";
 import { DEFAULT_PAYMENT_FEES } from "./payment-fees";
-import type { Admin, Coupon, DeliverySettings, Order, PaymentFees, Product, StoreSettings, StoredCustomer } from "./types";
+import { DEFAULT_PLAN } from "./subscription-pricing";
+import type { Admin, Coupon, DeliverySettings, Order, PaymentFees, Product, StoreSettings, StoredCustomer, Subscription, SubscriptionPlan } from "./types";
 
 // Banco de dados como um documento JSON:
 // - com DATABASE_URL (ex.: Neon na Vercel): uma linha jsonb no Postgres, com lock por transação;
@@ -25,6 +26,8 @@ export type Schema = {
   settings: StoreSettings;
   paymentFees: PaymentFees;
   coupons: Coupon[];
+  subscriptions: Subscription[];
+  subscriptionPlan: SubscriptionPlan;
 };
 
 export const DATA_DIR = path.join(process.cwd(), "data");
@@ -68,6 +71,8 @@ function normalize(raw: Partial<Schema>): Schema {
     settings: { ...raw.settings, hours: raw.settings?.hours ?? ALWAYS_OPEN, social: { ...DEFAULT_SOCIAL, ...raw.settings?.social } },
     paymentFees: raw.paymentFees ?? DEFAULT_PAYMENT_FEES,
     coupons: (raw.coupons ?? []).map(migrateCoupon),
+    subscriptions: raw.subscriptions ?? [],
+    subscriptionPlan: { ...DEFAULT_PLAN, ...raw.subscriptionPlan },
   };
 }
 

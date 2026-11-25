@@ -28,6 +28,15 @@ export function OrderTotals({ order }: { order: Order }) {
         <span>{order.delivery.free ? <span className="font-semibold text-leaf">Grátis</span> : brl(order.delivery.fee)}</span>
       </div>
       )}
+      {!!order.subscription?.freePod && (
+        <div className="flex justify-between text-leaf"><span>Pod do mês (assinatura)</span><span>−{brl(order.subscription.freePod)}</span></div>
+      )}
+      {!!order.subscription?.secondPod && (
+        <div className="flex justify-between text-leaf">
+          <span>2º pod do assinante ({order.subscription.percent.toLocaleString("pt-BR")}%)</span>
+          <span>−{brl(order.subscription.secondPod)}</span>
+        </div>
+      )}
       {order.coupon && (
         <div className="flex justify-between text-leaf">
           <span>Cupom {order.coupon.code} ({couponLabel(order.coupon).toLowerCase()})</span>

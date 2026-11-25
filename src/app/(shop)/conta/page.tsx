@@ -5,16 +5,18 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { AtSign, ChevronRight, LogOut, Mail, MapPin, Package, Phone } from "lucide-react";
+import { AtSign, ChevronRight, LogOut, Mail, MapPin, Package, Phone, Repeat } from "lucide-react";
 import { brl, formatDate, formatPhone } from "@/lib/format";
 import { formatAddress } from "@/lib/delivery-pricing";
 import { logout, useSession } from "@/lib/session";
+import { useStoreInfo } from "@/lib/store-info";
 import type { Order } from "@/lib/types";
 import { StatusBadge } from "@/components/OrderStatus";
 
 export default function AccountPage() {
   const router = useRouter();
   const { customer, loaded } = useSession();
+  const { plan } = useStoreInfo();
   const [orders, setOrders] = useState<Order[] | null>(null);
 
   useEffect(() => {
@@ -61,6 +63,17 @@ export default function AccountPage() {
           <LogOut className="size-4" /> Sair
         </button>
       </motion.section>
+
+      {plan?.enabled && (
+        <Link href="/assinatura" className="card mt-4 flex items-center gap-4 p-4 transition hover:border-brand/50">
+          <span className="grid size-12 shrink-0 place-items-center rounded-xl bg-brand/15 text-brand"><Repeat className="size-5" /></span>
+          <span className="min-w-0 flex-1">
+            <span className="block font-semibold">Assinatura</span>
+            <span className="text-sm text-muted">1 pod por mês e desconto no 2º. Veja ou gerencie a sua.</span>
+          </span>
+          <ChevronRight className="size-5 shrink-0 text-muted" />
+        </Link>
+      )}
 
       <h2 className="mb-3 mt-8 font-display text-xl">Meus pedidos</h2>
       {orders === null ? (

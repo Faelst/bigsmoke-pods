@@ -5,7 +5,8 @@ import type { CouponOffer, DeliveryQuote } from "./types";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-// Frete grátis zera a entrega; o desconto em % ou em R$ vale só sobre os produtos.
+// Frete grátis zera a entrega; o desconto em % ou em R$ vale só sobre os produtos
+// (e também zera a entrega quando o cupom de desconto vem com frete grátis junto).
 // A taxa de processamento é calculada depois, sobre o valor já com desconto.
 export function applyCoupon(coupon: CouponOffer | null | undefined, subtotal: number, delivery: DeliveryQuote) {
   if (coupon?.kind === "free_shipping") {
@@ -17,7 +18,7 @@ export function applyCoupon(coupon: CouponOffer | null | undefined, subtotal: nu
       : coupon?.kind === "fixed"
         ? round2(Math.min(coupon.amount ?? 0, subtotal))
         : 0;
-  return { discount: productDiscount, productDiscount, delivery };
+  return { discount: productDiscount, productDiscount, delivery: coupon?.freeShipping ? { ...delivery, fee: 0, free: true } : delivery };
 }
 
 // Valor antes da taxa de processamento.
@@ -26,9 +27,8 @@ export const couponBase = (subtotal: number, productDiscount: number, deliveryFe
 export const couponLabel = (c: CouponOffer) =>
   c.kind === "free_shipping"
     ? "Frete grátis"
-    : c.kind === "fixed"
-      ? `${brl(c.amount ?? 0)} de desconto`
-      : `${(c.percent ?? 0).toLocaleString("pt-BR")}% de desconto`;
+    : (c.kind === "fixed" ? `${brl(c.amount ?? 0)} de desconto` : `${(c.percent ?? 0).toLocaleString("pt-BR")}% de desconto`) +
+      (c.freeShipping ? " + frete grátis" : "");
 
 // Desconto nos produtos (em % ou em R$), ao contrário do frete grátis.
 export const isProductDiscount = (c: Pick<CouponOffer, "kind">) => c.kind !== "free_shipping";
